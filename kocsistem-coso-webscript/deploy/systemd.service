@@ -1,0 +1,29 @@
+[Unit]
+Description=KoçSistem COSO Webscript Receiver
+After=network.target
+
+[Service]
+Type=simple
+User=cosoweb
+Group=cosoweb
+WorkingDirectory=/opt/coso-webscript
+EnvironmentFile=/etc/coso-webscript.env
+ExecStart=/opt/coso-webscript/.venv/bin/gunicorn app.main:app \
+    -k uvicorn.workers.UvicornWorker \
+    --bind 127.0.0.1:8000 \
+    --workers 2 \
+    --timeout 60 \
+    --access-logfile - \
+    --error-logfile -
+Restart=on-failure
+RestartSec=5
+
+# Hardening
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+ProtectHome=true
+ReadWritePaths=/var/lib/coso-webscript
+
+[Install]
+WantedBy=multi-user.target

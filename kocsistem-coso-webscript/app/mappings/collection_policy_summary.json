@@ -1,0 +1,187 @@
+{
+  "source_file": "a3f339b1-a84b-465d-b91a-3e1cae531b06.json",
+  "name": "OOTB_AgentMetricCollection",
+  "id": "OOTB_AgentMetricCollection_id",
+  "collection_interval_mins": 5,
+  "initial_history_mins": 60,
+  "max_history_mins": 180,
+  "datasource": "SCOPE",
+  "classes": {
+    "GLOBAL": {
+      "target_key": "SCOPE_GLOBAL",
+      "target_table": "opsb_agent_node",
+      "summary_level_mins": 5,
+      "important_metrics": [
+        "GBL_ACTIVE_CPU",
+        "GBL_CPU_TOTAL_UTIL",
+        "GBL_MEM_UTIL",
+        "GBL_DISK_PHYS_BYTE_RATE",
+        "GBL_NET_PACKET_RATE",
+        "GBL_SYSTEM_UPTIME_SECONDS",
+        "GBL_OSNAME",
+        "GBL_SYSTEM_ID"
+      ]
+    },
+    "CONFIGURATION": {
+      "target_key": "SCOPE_GLOBAL",
+      "target_table": "opsb_agent_node",
+      "summary_level_mins": 5,
+      "important_metrics": [
+        "GBL_BOOT_TIME",
+        "GBL_COLLECTOR",
+        "GBL_MACHINE",
+        "GBL_MACHINE_MODEL",
+        "GBL_MEM_PHYS",
+        "GBL_NUM_CPU",
+        "GBL_NUM_DISK",
+        "GBL_OSNAME",
+        "GBL_SYSTEM_ID"
+      ]
+    },
+    "DISK": {
+      "target_key": "SCOPE_DISK",
+      "target_table": "opsb_agent_disk",
+      "summary_level_mins": 5,
+      "important_metrics": [
+        "BYDSK_DEVNAME",
+        "BYDSK_DEVNO",
+        "BYDSK_DIRNAME",
+        "BYDSK_PHYS_BYTE_RATE",
+        "BYDSK_PHYS_IO_RATE",
+        "BYDSK_REQUEST_QUEUE",
+        "BYDSK_UTIL"
+      ]
+    },
+    "FILESYSTEM": {
+      "target_key": "SCOPE_FILESYSTEM",
+      "target_table": "opsb_agent_filesys",
+      "summary_level_mins": 5,
+      "important_metrics": [
+        "FS_BLOCK_SIZE",
+        "FS_DEVNAME",
+        "FS_DIRNAME",
+        "FS_MAX_SIZE",
+        "FS_SPACE_USED",
+        "FS_SPACE_UTIL",
+        "FS_TYPE"
+      ]
+    },
+    "CPU": {
+      "target_key": "SCOPE_CPU",
+      "target_table": "opsb_agent_cpu",
+      "summary_level_mins": 5,
+      "important_metrics": [
+        "BYCPU_ACTIVE",
+        "BYCPU_CPU_CLOCK",
+        "BYCPU_CPU_TOTAL_UTIL",
+        "BYCPU_ID",
+        "BYCPU_INTERRUPT_RATE",
+        "BYCPU_STATE"
+      ]
+    },
+    "NETIF": {
+      "target_key": "SCOPE_NETIF",
+      "target_table": "opsb_agent_netif",
+      "summary_level_mins": 5,
+      "important_metrics": [
+        "BYNETIF_NAME",
+        "BYNETIF_IN_BYTE_RATE",
+        "BYNETIF_OUT_BYTE_RATE",
+        "BYNETIF_PACKET_RATE",
+        "BYNETIF_NET_SPEED",
+        "BYNETIF_UTIL"
+      ]
+    }
+  },
+  "common_fields_map": {
+    "cmdb_global_id": "cmdb_global_id",
+    "cmdb_id": "cmdb_id",
+    "collection_data_flow": "collection_data_flow",
+    "collection_type": "collection_type",
+    "CollectionConfigName": "collection_policy_name",
+    "MonitoredSystem": "node_fqdn",
+    "MonitoredSystemID": "node_short_name",
+    "MonitoredSystemTimezone": "node_timezone_offset_h",
+    "node_ip_type": "node_ip_type",
+    "node_ipv4_address": "node_ipv4_address",
+    "node_ipv6_address": "node_ipv6_address",
+    "producer_instance_id": "producer_instance_id",
+    "producer_instance_type": "producer_instance_type",
+    "tenant_id": "tenant_id",
+    "timestamp_utc": "timestamp_utc_s"
+  },
+  "class_table_map": {
+    "SCOPE_GLOBAL": "opsb_agent_node",
+    "SCOPE_DISK": "opsb_agent_disk",
+    "SCOPE_FILESYSTEM": "opsb_agent_filesys",
+    "SCOPE_CPU": "opsb_agent_cpu",
+    "SCOPE_NETIF": "opsb_agent_netif"
+  },
+  "metric_map": {
+    "GLOBAL": {
+      "GBL_ACTIVE_CPU": "active_cpu_count",
+      "GBL_CPU_TOTAL_UTIL": "cpu_util_pct",
+      "GBL_CPU_USER_MODE_UTIL": "cpu_user_mode_util_pct",
+      "GBL_CPU_SYS_MODE_UTIL": "cpu_sys_mode_util_pct",
+      "GBL_MEM_UTIL": "mem_util_pct",
+      "GBL_MEM_PHYS": "mem_phys_total",
+      "GBL_DISK_PHYS_BYTE_RATE": "disk_phys_byte_rate",
+      "GBL_NET_PACKET_RATE": "net_packet_rate",
+      "GBL_SYSTEM_UPTIME_SECONDS": "uptime_s",
+      "GBL_OSNAME": "os_name",
+      "GBL_SYSTEM_ID": "system_id"
+    },
+    "CONFIGURATION": {
+      "GBL_BOOT_TIME": "boot_time",
+      "GBL_COLLECTOR": "collector",
+      "GBL_MACHINE": "machine",
+      "GBL_MACHINE_MODEL": "machine_model",
+      "GBL_MEM_PHYS": "mem_phys_total",
+      "GBL_NUM_CPU": "num_cpu",
+      "GBL_NUM_DISK": "num_disk",
+      "GBL_OSNAME": "os_name",
+      "GBL_SYSTEM_ID": "system_id"
+    },
+    "DISK": {
+      "BYDSK_DEVNAME": "disk_device_name",
+      "BYDSK_DEVNO": "disk_device_no",
+      "BYDSK_DIRNAME": "disk_dir_name",
+      "BYDSK_PHYS_BYTE_RATE": "disk_phys_byte_rate",
+      "BYDSK_PHYS_IO_RATE": "disk_phys_io_rate",
+      "BYDSK_REQUEST_QUEUE": "disk_request_queue",
+      "BYDSK_UTIL": "disk_util_pct"
+    },
+    "FILESYSTEM": {
+      "FS_BLOCK_SIZE": "fs_block_size",
+      "FS_DEVNAME": "fs_device_name",
+      "FS_DIRNAME": "fs_dir_name",
+      "FS_MAX_SIZE": "fs_max_size",
+      "FS_SPACE_USED": "fs_space_used",
+      "FS_SPACE_UTIL": "fs_util_pct",
+      "FS_TYPE": "fs_type"
+    },
+    "CPU": {
+      "BYCPU_ACTIVE": "cpu_active",
+      "BYCPU_CPU_CLOCK": "cpu_clock",
+      "BYCPU_CPU_TOTAL_UTIL": "cpu_total_util_pct",
+      "BYCPU_ID": "cpu_id",
+      "BYCPU_INTERRUPT_RATE": "cpu_interrupt_rate",
+      "BYCPU_STATE": "cpu_state"
+    },
+    "NETIF": {
+      "BYNETIF_NAME": "netif_name",
+      "BYNETIF_IN_BYTE_RATE": "netif_in_byte_rate",
+      "BYNETIF_OUT_BYTE_RATE": "netif_out_byte_rate",
+      "BYNETIF_PACKET_RATE": "netif_packet_rate",
+      "BYNETIF_NET_SPEED": "netif_net_speed",
+      "BYNETIF_UTIL": "netif_util_pct"
+    }
+  },
+  "class_prefix_map": {
+    "GBL_": "GLOBAL",
+    "BYDSK_": "DISK",
+    "FS_": "FILESYSTEM",
+    "BYCPU_": "CPU",
+    "BYNETIF_": "NETIF"
+  }
+}

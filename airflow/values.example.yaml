@@ -1,0 +1,65 @@
+# ============================================================================
+# Sanitized reference of the Airflow Helm values relevant to this pipeline.
+# This is NOT a complete values.yaml — it highlights only the settings that
+# matter for the Zabbix → PostgreSQL pipeline. Replace all <placeholders>.
+# ============================================================================
+
+airflowVersion: "3.0.6"
+executor: "KubernetesExecutor"
+
+# --- DAGs: how DAG files reach the pods ------------------------------------
+# This example uses a shared NFS PVC. Adjust to your delivery method
+# (git-sync, baked image, etc.).
+dags:
+  persistence:
+    enabled: true
+    storageClassName: nfs-client
+    accessMode: ReadWriteMany
+    size: 10Gi
+
+# --- Logs -------------------------------------------------------------------
+logs:
+  persistence:
+    enabled: true
+    storageClassName: nfs-client
+    size: 20Gi
+
+# --- Required Python packages ----------------------------------------------
+# psycopg2-binary and apache-airflow-providers-postgres ship with recent
+# official images. If your image lacks them and you have registry access,
+# bake them into a custom image rather than using _PIP_ADDITIONAL_REQUIREMENTS
+# (which re-installs on every pod start and needs internet at runtime).
+#
+# Custom image approach (recommended for air-gapped clusters):
+#   images:
+#     airflow:
+#       repository: <internal-registry>/airflow-custom
+#       tag: "3.0.6"
+#       pullPolicy: IfNotPresent
+#
+# Dockerfile:
+#   FROM apache/airflow:3.0.6
+#   RUN pip install --no-cache-dir \
+#       "psycopg2-binary>=2.9.9" \
+#       "apache-airflow-providers-postgres>=6.0.0"
+
+# --- Metadata database (Airflow's own DB; not the datalake) ----------------
+data:
+  metadataConnection:
+    user: <airflow-db-user>
+    pass: <airflow-db-pass>
+    host: <airflow-db-host>
+    port: 5432
+    db: <airflow-db-name>
+    sslmode: disable
+
+# --- Web UI exposure --------------------------------------------------------
+webserver:
+  service:
+    type: NodePort
+  defaultUser:
+    enabled: true
+    username: <admin-user>
+    password: <admin-pass>
+    role: Admin
+    email: <admin-email>

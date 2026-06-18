@@ -1,0 +1,36 @@
+services:
+  app:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile
+    image: kocsistem-coso-webscript:local
+    container_name: coso-webscript-app
+    restart: unless-stopped
+    env_file:
+      - ../.env
+    environment:
+      RAW_PAYLOAD_DIR: /var/lib/coso-webscript/raw
+      NORMALIZED_JSONL_PATH: /var/lib/coso-webscript/normalized/metrics.jsonl
+      QUARANTINE_DIR: /var/lib/coso-webscript/quarantine
+    volumes:
+      - coso-data:/var/lib/coso-webscript
+    expose:
+      - "8000"
+    # The app port is intentionally not published. In production it sits behind
+    # the nginx service below; for local debugging you can publish 8000 manually.
+
+  nginx:
+    image: nginx:1.27-alpine
+    container_name: coso-webscript-nginx
+    restart: unless-stopped
+    depends_on:
+      - app
+    ports:
+      - "443:443"
+      - "80:80"
+    volumes:
+      - ./nginx.conf:/etc/nginx/conf.d/default.conf:ro
+      - ./certs:/etc/coso-webscript/certs:ro
+
+volumes:
+  coso-data:
