@@ -65,8 +65,13 @@ Apply the SQL in order (see [`../sql/`](../sql/)):
 ```bash
 psql -h <db_host> -U <admin_user> -d <db_name> -f sql/01_zabbix_inventory.sql
 psql -h <db_host> -U <admin_user> -d <db_name> -f sql/02_zabbix_history.sql
+psql -h <db_host> -U <admin_user> -d <db_name> -f sql/04_zabbix_metadata.sql
+psql -h <db_host> -U <admin_user> -d <db_name> -f sql/05_obm_agent.sql
 psql -h <db_host> -U <admin_user> -d <db_name> -f sql/03_grants.sql
 ```
+
+`05_obm_agent.sql` is for the push-side `data-collector-webservice` (OBM agent
+metric tables); apply it only if you deploy that service.
 
 The writer also creates tables automatically (`CREATE TABLE IF NOT EXISTS`),
 but applying the SQL explicitly lets you add indexes and grants up front.
@@ -93,6 +98,7 @@ shared volume — whichever your deployment uses):
 ```
 dags/zabbix_data_collector_v2.py
 dags/zabbix_history_collector.py
+dags/zabbix_metadata_collector.py
 dags/generic_postgres_writer.py
 ```
 
@@ -118,6 +124,8 @@ kubectl exec -n <namespace> deployment/airflow-scheduler -- \
   airflow dags unpause zabbix_data_collector_v2
 kubectl exec -n <namespace> deployment/airflow-scheduler -- \
   airflow dags unpause zabbix_history_collector
+kubectl exec -n <namespace> deployment/airflow-scheduler -- \
+  airflow dags unpause zabbix_metadata_collector
 kubectl exec -n <namespace> deployment/airflow-scheduler -- \
   airflow dags unpause generic_postgres_writer
 ```

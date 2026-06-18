@@ -1,7 +1,7 @@
 """Smoke checks on shipped TLS/mTLS deployment assets.
 
 These tests do not exercise a real TLS handshake; they only verify that the
-deployment files we ship document the contract the CTO pack requires.
+deployment files we ship document the required TLS/mTLS contract.
 """
 
 from __future__ import annotations
@@ -31,11 +31,11 @@ def test_env_example_documents_security_toggles():
 
 def test_dockerfile_runs_as_non_root_user():
     docker = (_REPO_ROOT / "deploy" / "Dockerfile").read_text(encoding="utf-8")
-    assert "USER cosoweb" in docker
+    assert "USER appuser" in docker
 
 
 def test_systemd_unit_uses_environment_file_and_hardening():
     unit = (_REPO_ROOT / "deploy" / "systemd.service").read_text(encoding="utf-8")
-    assert "EnvironmentFile=/etc/coso-webscript.env" in unit
+    assert "EnvironmentFile=/etc/data-collector.env" in unit
     assert "NoNewPrivileges=true" in unit
-    assert "User=cosoweb" in unit
+    assert "User=appuser" in unit

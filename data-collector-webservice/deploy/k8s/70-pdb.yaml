@@ -1,0 +1,12 @@
+apiVersion: policy/v1
+kind: PodDisruptionBudget
+metadata:
+  name: data-collector-webservice
+  namespace: data-collector
+  labels:
+    app.kubernetes.io/name: data-collector-webservice
+spec:
+  minAvailable: 4
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: data-collector-webservice

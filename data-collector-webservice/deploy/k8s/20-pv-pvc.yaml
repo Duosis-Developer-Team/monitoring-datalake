@@ -1,0 +1,85 @@
+# NFS volumes.
+#
+# `data-collector-staging` MUST point at the SAME NFS export + path that the
+# Airflow generic_postgres_writer scans, so files this service writes into
+# <path>/pending land in the writer's pending/ dir. Set server/path to your
+# Airflow staging NFS export (the dir whose `pending/` the writer globs).
+#
+# `data-collector-audit` is a separate export for durable raw/quarantine audit
+# trails (one file per request; safe to share across replicas).
+#
+# Replace nfs.server and nfs.path with your environment's values. If your
+# cluster has a dynamic RWX StorageClass (e.g. nfs-client), you can instead drop
+# the PVs and set storageClassName on the PVCs.
+---
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: data-collector-staging-pv
+  labels:
+    app.kubernetes.io/name: data-collector-webservice
+    role: staging
+spec:
+  capacity:
+    storage: 50Gi
+  accessModes:
+    - ReadWriteMany
+  persistentVolumeReclaimPolicy: Retain
+  storageClassName: ""
+  mountOptions:
+    - nfsvers=4.1
+    - hard
+    - noatime
+  nfs:
+    server: nfs.example.local            # <-- Airflow staging NFS server
+    path: /export/airflow/staging        # <-- dir whose pending/ the writer scans
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: data-collector-staging
+  namespace: data-collector
+spec:
+  accessModes:
+    - ReadWriteMany
+  storageClassName: ""
+  volumeName: data-collector-staging-pv
+  resources:
+    requests:
+      storage: 50Gi
+---
+apiVersion: v1
+kind: PersistentVolume
+metadata:
+  name: data-collector-audit-pv
+  labels:
+    app.kubernetes.io/name: data-collector-webservice
+    role: audit
+spec:
+  capacity:
+    storage: 100Gi
+  accessModes:
+    - ReadWriteMany
+  persistentVolumeReclaimPolicy: Retain
+  storageClassName: ""
+  mountOptions:
+    - nfsvers=4.1
+    - hard
+    - noatime
+  nfs:
+    server: nfs.example.local            # <-- audit NFS server
+    path: /export/data-collector/audit   # <-- raw + quarantine archive
+---
+apiVersion: v1
+kind: PersistentVolumeClaim
+metadata:
+  name: data-collector-audit
+  namespace: data-collector
+spec:
+  accessModes:
+    - ReadWriteMany
+  storageClassName: ""
+  volumeName: data-collector-audit-pv
+  resources:
+    requests:
+      storage: 100Gi

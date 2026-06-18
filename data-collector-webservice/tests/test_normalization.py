@@ -138,7 +138,7 @@ def test_common_fields_extracted():
             "CollectionConfigName": "OOTB_AgentMetricCollection",
             "MonitoredSystem": "host.example.local",
             "MonitoredSystemID": "host",
-            "tenant_id": "kocsistem",
+            "tenant_id": "example-tenant",
             "timestamp_utc": 1779638400,
             "class_name": "GLOBAL",
             "metrics": {"GBL_CPU_TOTAL_UTIL": 10.0},
@@ -149,7 +149,7 @@ def test_common_fields_extracted():
     assert common["collection_policy_name"] == "OOTB_AgentMetricCollection"
     assert common["node_fqdn"] == "host.example.local"
     assert common["node_short_name"] == "host"
-    assert common["tenant_id"] == "kocsistem"
+    assert common["tenant_id"] == "example-tenant"
     assert common["timestamp_utc_s"] == 1779638400
 
 
