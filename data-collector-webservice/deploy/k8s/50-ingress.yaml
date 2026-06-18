@@ -1,0 +1,55 @@
+# mTLS-terminating Ingress (ingress-nginx).
+#
+# Prerequisites (create these secrets first):
+#   1. Server TLS cert for the public hostname:
+#        kubectl -n data-collector create secret tls data-collector-tls \
+#          --cert=server.crt --key=server.key
+#   2. CA bundle that signed the OBM agents' client certs (key MUST be ca.crt):
+#        kubectl -n data-collector create secret generic obm-client-ca \
+#          --from-file=ca.crt=client_ca.crt
+#
+# The configuration-snippet maps ingress-nginx's verification result onto the
+# X-SSL-Client-* headers the app reads. ingress-nginx must allow snippets:
+# set `allow-snippet-annotations: "true"` in the controller ConfigMap (and, on
+# newer charts, add this snippet's directives to `annotation-value-word-blocklist`
+# exceptions). If snippets are disallowed in your cluster, terminate mTLS with the
+# sidecar nginx (deploy/nginx.conf) instead.
+apiVersion: networking.k8s.io/v1
+kind: Ingress
+metadata:
+  name: data-collector-webservice
+  namespace: data-collector
+  labels:
+    app.kubernetes.io/name: data-collector-webservice
+  annotations:
+    nginx.ingress.kubernetes.io/ssl-redirect: "true"
+    nginx.ingress.kubernetes.io/proxy-body-size: "10m"
+    nginx.ingress.kubernetes.io/proxy-read-timeout: "60"
+    # ----- mTLS (client certificate auth) -----
+    nginx.ingress.kubernetes.io/auth-tls-verify-client: "on"
+    nginx.ingress.kubernetes.io/auth-tls-secret: "data-collector/obm-client-ca"
+    nginx.ingress.kubernetes.io/auth-tls-verify-depth: "2"
+    nginx.ingress.kubernetes.io/auth-tls-pass-certificate-to-upstream: "true"
+    # ----- Forward the verdict to the app as X-SSL-Client-* headers -----
+    nginx.ingress.kubernetes.io/configuration-snippet: |
+      proxy_set_header X-SSL-Client-Verify       $ssl_client_verify;
+      proxy_set_header X-SSL-Client-Subject      $ssl_client_s_dn;
+      proxy_set_header X-SSL-Client-Issuer       $ssl_client_i_dn;
+      proxy_set_header X-SSL-Client-Fingerprint  $ssl_client_fingerprint;
+spec:
+  ingressClassName: nginx
+  tls:
+    - hosts:
+        - data-collector.example.local
+      secretName: data-collector-tls
+  rules:
+    - host: data-collector.example.local
+      http:
+        paths:
+          - path: /
+            pathType: Prefix
+            backend:
+              service:
+                name: data-collector-webservice
+                port:
+                  number: 80

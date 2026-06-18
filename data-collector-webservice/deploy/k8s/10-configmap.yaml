@@ -1,0 +1,40 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: data-collector-config
+  namespace: data-collector
+  labels:
+    app.kubernetes.io/name: data-collector-webservice
+data:
+  APP_NAME: "data-collector-webservice"
+  APP_ENV: "prod"
+  LOG_LEVEL: "INFO"
+
+  # Strict validation off → weak records are accepted (200) and quarantined.
+  STRICT_VALIDATION: "false"
+
+  # Production output: write {meta,data} files into the shared NFS pending/ dir.
+  OUTPUT_SINKS: "staging"
+
+  # MUST resolve to the same physical NFS directory the Airflow
+  # generic_postgres_writer scans (its staging_folder_path Variable).
+  # The PVC `data-collector-staging` is backed by that same NFS export.
+  STAGING_FOLDER_PATH: "/nfs/airflow-staging"
+  PENDING_DIRNAME: "pending"
+
+  # Local-per-pod audit (durable: backed by the audit NFS PVC).
+  RAW_PAYLOAD_DIR: "/var/lib/data-collector/raw"
+  QUARANTINE_DIR: "/var/lib/data-collector/quarantine"
+
+  MAX_BODY_BYTES: "10485760"
+
+  # mTLS is terminated at the Ingress; it forwards the verdict via these headers.
+  TRUST_PROXY_CERT_HEADERS: "true"
+  ENFORCE_PROXY_MTLS_HEADER: "true"
+  CLIENT_CERT_VERIFY_HEADER: "X-SSL-Client-Verify"
+  CLIENT_CERT_SUBJECT_HEADER: "X-SSL-Client-Subject"
+  CLIENT_CERT_ISSUER_HEADER: "X-SSL-Client-Issuer"
+  CLIENT_CERT_FINGERPRINT_HEADER: "X-SSL-Client-Fingerprint"
+
+  # gunicorn worker count per pod (async workers). Keep modest; scale via replicas.
+  WEB_CONCURRENCY: "4"

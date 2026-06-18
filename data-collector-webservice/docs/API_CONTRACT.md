@@ -1,6 +1,6 @@
 # API Contract
 
-## `POST /webscript/coso/metrics` (and `POST /api/v1/obm/metrics`)
+## `POST /api/v1/obm/metrics` (and `POST /api/v1/obm/metrics`)
 
 Accepts an OBM-formatted JSON payload, archives it, normalizes the known metric
 classes, and returns `200 OK` on acceptance.

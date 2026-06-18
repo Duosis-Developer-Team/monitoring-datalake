@@ -7,19 +7,24 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 A monitoring-to-datalake pipeline. It collects metrics and inventory from
 infrastructure monitoring sources (Zabbix 7.x, OpenText OBM agents) and lands
 them in a PostgreSQL datalake using Apache Airflow. The repo holds **two
-independent subsystems** that do not share code:
+subsystems**. They share no code, but they converge on the same NFS
+`pending/` directory and the same PostgreSQL writer:
 
 1. **`dags/` + `sql/` + `airflow/`** — the Airflow pipeline that pulls from the
-   Zabbix API and writes to PostgreSQL.
-2. **`kocsistem-coso-webscript/`** — a standalone FastAPI service (the COSO
-   webscript) that *receives* OBM-format metric payloads pushed over mTLS HTTPS,
-   audits them, normalizes them, and appends to JSON Lines. It is the
-   OBM → COSO destination side; the two subsystems are deployed and run
-   separately.
+   Zabbix API (and now also loads whatever the webservice drops in `pending/`).
+2. **`data-collector-webservice/`** — a standalone, source-agnostic FastAPI
+   service that *receives* pushed metric payloads over mTLS HTTPS, audits them,
+   normalizes them, and writes the same `{meta, data}` staging files into the
+   shared NFS `pending/` dir for the writer DAG to load. Its first ingest source
+   is `obm_agent` (OpenText OBM); future sources plug in under
+   `app/sources/<name>/`. It is built to run as **multiple replicas** on the
+   Airflow Kubernetes cluster.
 
 Most prose docs are under `docs/` (pipeline) and
-`kocsistem-coso-webscript/docs/` (webscript). Note: code comments and DAG
-docstrings are in **Turkish**; match that language when editing them.
+`data-collector-webservice/docs/` (webservice). Note: code comments and DAG
+docstrings are in **Turkish**; match that language when editing them. Do **not**
+reintroduce customer names (e.g. "kocsistem"/"coso") anywhere — the webservice
+was deliberately de-branded to `data-collector-webservice`.
 
 ## Subsystem 1: Airflow Zabbix → PostgreSQL pipeline
 
@@ -58,7 +63,7 @@ Column types: `meta.column_types` override > `json_columns`→JSONB >
 `*_at`→TIMESTAMPTZ > everything else TEXT. The `sql/` files are the canonical
 schema/index/grant reference, but the writer will create tables itself if absent.
 
-### The two collectors
+### The collectors
 
 - **`zabbix_data_collector_v2`** (`@hourly`) — host inventory. Three API calls
   (hosts+interfaces+groups+templates paginated, then macros, then tags) merged
@@ -73,6 +78,14 @@ schema/index/grant reference, but the writer will create tables itself if absent
   `[data_interval_start - overlap_seconds, data_interval_end]` — the deliberate
   overlap prevents boundary loss; the resulting duplicates are absorbed by the
   writer's `ON CONFLICT DO NOTHING`.
+- **`zabbix_metadata_collector`** (`@hourly`) — id↔name lookups. Pulls **all**
+  templates (`template.get`) and **all** items (`item.get`, `webitems=True`, no
+  monitored filter) and emits two `upsert` files: `zabbix_templates`
+  (`templateid`) and `zabbix_items` (`itemid`, with `name`, `key_`, `units`,
+  `value_type`/`value_type_name`, `hostid`). This is the lookup layer that makes
+  `zabbix_history`'s raw values human-readable (`history.itemid → items.name`,
+  `items.hostid → inventory.name`) and feeds the planned host-category Grafana
+  dashboards.
 
 ### Editing DAGs — two hard constraints
 
@@ -89,7 +102,7 @@ schema/index/grant reference, but the writer will create tables itself if absent
 
 Everything environment-specific lives in Airflow **Connections** and
 **Variables**, documented in [docs/CONFIGURATION.md](docs/CONFIGURATION.md):
-- Connection `zabbix_api_conn` (HTTP) — both collectors. If Login is empty, the
+- Connection `zabbix_api_conn` (HTTP) — all three collectors. If Login is empty, the
   Password field is treated as a pre-issued API token instead of doing
   `user.login`.
 - Postgres connection id is itself a Variable (`pg_writer_conn_id`, default
@@ -101,13 +114,59 @@ copying `dags/*.py` into the Airflow DAGs folder (KubernetesExecutor). See
 [docs/SETUP.md](docs/SETUP.md). `airflow/values.example.yaml` is a sanitized Helm
 reference.
 
-## Subsystem 2: kocsistem-coso-webscript (FastAPI OBM receiver)
+## Subsystem 2: data-collector-webservice (source-agnostic FastAPI receiver)
 
-A FastAPI app that accepts OBM-format JSON over HTTPS POST, archives the raw
-bytes, normalizes, and persists. Self-contained Python package with its own
-`requirements.txt` and pytest suite under `kocsistem-coso-webscript/`.
+A FastAPI app that accepts pushed metric JSON over mTLS HTTPS, archives the raw
+bytes, normalizes, and writes Airflow staging files. Self-contained Python
+package with its own `requirements.txt` and pytest suite under
+`data-collector-webservice/`.
 
-### Commands (run from inside `kocsistem-coso-webscript/`)
+### The big idea: it feeds the *same* writer as the DAGs
+
+The webservice is the push-side counterpart to the Zabbix collectors. Instead of
+its own DB code, its **`StagingSink` writes `{meta, data}` files into the shared
+NFS `pending/` dir** (the same one the collectors use), so the
+`generic_postgres_writer` DAG loads OBM data with zero changes. One file per
+target table per request, written atomically (temp + `os.replace`) so the writer
+never reads a partial file. `OUTPUT_SINKS` picks sinks (`staging` for prod;
+`jsonl` is a dev-only single-file sink that is **not** replica-safe).
+
+### Source-agnostic layout (add sources, don't fork core)
+
+- `app/core`, `app/services` (ingestion orchestration + storage sinks),
+  `app/api` (system routes + shared `handle_metrics`) are **source-agnostic**.
+- Each ingest source is a self-contained package under `app/sources/<name>/`
+  with its own `normalization.py`, `staging.py` (builds the `{meta,data}`),
+  `routes.py`, and `mappings/`. `obm_agent` is the only one today.
+- `app/main.py` wires it up: it builds the source's normalizer + identity check +
+  staging builder, mounts the source router, and constructs the sinks.
+- **To add a new environment/source, add `app/sources/<name>/` and wire it in
+  `main.py`. Never put source-specific logic in `core`/`services`.**
+
+### Other architecture notes
+
+- Ingest flow (`services/ingestion_service.py`): **archive raw → normalize →
+  persist**, source-agnostic (normalizer + `identity_check` are injected). Raw is
+  always written to `$RAW_PAYLOAD_DIR/YYYY/MM/DD/<request_id>.json` *before*
+  normalization; weak/failed records go to `$QUARANTINE_DIR`. Both are one file
+  per request → safe across replicas.
+- **Normalization is intentionally tolerant** (`sources/obm_agent/normalization.py`):
+  multiple envelope shapes, prefix-based class inference, unmapped metrics kept
+  under `extra_metrics`. Mapping source of truth:
+  `app/sources/obm_agent/mappings/collection_policy_summary.json`. The staging
+  builder derives a **stable column superset per table** from that mapping so the
+  writer's first-record column inference stays consistent; `sql/05_obm_agent.sql`
+  is the matching typed DDL (keep them in sync).
+- **mTLS is terminated at the proxy, not the app** — Kubernetes Ingress in prod
+  (or Nginx in the same-host layout). The proxy forwards `X-SSL-Client-*`
+  headers; the app re-checks them when `ENFORCE_PROXY_MTLS_HEADER=true`
+  (`core/security.py`). **The app port must never be internet-exposed.**
+- **Kubernetes is the deployment target** (`deploy/k8s/`, kustomize): multiple
+  replicas spread across the Airflow workers, mTLS Ingress, NFS PVCs (one shared
+  with Airflow for `pending/`, one for audit), HPA + PDB. Sized for ~9000 nodes
+  pushing every 5–10 min.
+
+### Commands (run from inside `data-collector-webservice/`)
 
 ```bash
 python3 -m venv .venv && source .venv/bin/activate
@@ -116,35 +175,12 @@ cp .env.example .env            # then point storage paths at a writable dir for
 
 uvicorn app.main:app --reload --host 127.0.0.1 --port 8000   # run locally
 pytest -q                                                    # run all tests
-pytest tests/test_normalization.py -q                        # run one test file
-pytest tests/test_normalization.py::test_name -q             # run one test
+pytest tests/test_staging_output.py -q                       # run one test file
+pytest tests/test_staging_output.py::test_no_tmp_files_left_in_pending -q  # one test
 ```
 
 For local mTLS: `scripts/generate_test_certs.sh` then
 `docker compose -f deploy/docker-compose.yml up --build`.
 
-### Architecture
-
-- Ingest flow (`services/ingestion_service.py`): **archive raw → normalize →
-  persist**. The raw payload is always written to
-  `$RAW_PAYLOAD_DIR/YYYY/MM/DD/<request_id>.json` *before* normalization, so
-  mapping bugs are recoverable by replaying the audit archive after a fix.
-  Normalized records append to `$NORMALIZED_JSONL_PATH`; weak/failed records go
-  to `$QUARANTINE_DIR`.
-- **Normalization is intentionally tolerant** (`normalization_service.py`): it
-  accepts multiple envelope shapes, infers metric class by prefix when no
-  explicit class is given, and preserves unmapped metrics under `extra_metrics`
-  rather than dropping them — so re-processing the archive after adding mappings
-  loses nothing. The mapping source of truth is
-  `app/mappings/collection_policy_summary.json` (a collection-policy definition,
-  not a guaranteed runtime sample).
-- **Certificate auth is terminated at Nginx, not the app.** Production path is
-  OBM → Nginx (443, mTLS) → FastAPI (127.0.0.1:8000). Nginx passes its verdict
-  via `X-SSL-Client-*` headers; the app re-checks them only when
-  `ENFORCE_PROXY_MTLS_HEADER=true` (`core/security.py`), optionally against
-  subject/fingerprint allowlists. **The app port must never be internet-exposed.**
-- Config is pydantic-settings from env / `.env` (`core/config.py`); CSV env vars
-  for the allowlists are split by a `field_validator`.
-
-See `kocsistem-coso-webscript/docs/` (API_CONTRACT, RUNBOOK, SECURITY) for
-details.
+See `data-collector-webservice/docs/` (STAGING_OUTPUT, KUBERNETES, API_CONTRACT,
+RUNBOOK, SECURITY) for details.

@@ -3,7 +3,7 @@ def test_health_returns_ok(client):
     assert response.status_code == 200
     body = response.json()
     assert body["status"] == "ok"
-    assert body["service"] == "kocsistem-coso-webscript"
+    assert body["service"] == "data-collector-webservice"
     assert "version" in body
 
 

@@ -40,7 +40,12 @@ requires no changes.
 |-----|---------|----------|
 | `zabbix_data_collector_v2` | Host inventory (interfaces, macros, tags) | `@hourly` |
 | `zabbix_history_collector` | Time-series history values | `*/5 * * * *` |
+| `zabbix_metadata_collector` | Template + item id↔name lookups | `@hourly` |
 | `generic_postgres_writer` | Reads staging files, writes to PostgreSQL | `*/5 * * * *` |
+
+A separate push-side service, [`data-collector-webservice/`](data-collector-webservice/),
+receives OBM agent metrics over mTLS and drops the **same** staging-file format
+into `pending/`, so the writer loads it with no changes.
 
 ## Quick Start
 
@@ -63,6 +68,7 @@ overlap-based gap-prevention strategy used by the history collector.
 ├── dags/
 │   ├── zabbix_data_collector_v2.py    # host inventory collector
 │   ├── zabbix_history_collector.py    # time-series collector
+│   ├── zabbix_metadata_collector.py   # template + item id↔name lookups
 │   └── generic_postgres_writer.py     # generic metadata-driven writer
 ├── docs/
 │   ├── ARCHITECTURE.md                # design and data flow
@@ -72,7 +78,10 @@ overlap-based gap-prevention strategy used by the history collector.
 ├── sql/
 │   ├── 01_zabbix_inventory.sql        # inventory table + indexes
 │   ├── 02_zabbix_history.sql          # history table (time-series)
-│   └── 03_grants.sql                  # user permissions
+│   ├── 03_grants.sql                  # user permissions
+│   ├── 04_zabbix_metadata.sql         # templates + items lookup tables
+│   └── 05_obm_agent.sql               # OBM agent metric tables (webservice)
+├── data-collector-webservice/         # push-side FastAPI receiver (own README)
 └── airflow/
     └── values.example.yaml            # sanitized Helm values reference
 ```

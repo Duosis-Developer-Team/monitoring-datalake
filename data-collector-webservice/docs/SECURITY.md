@@ -15,7 +15,7 @@ OBM Agent  ──HTTPS POST :443, client cert──▶  Nginx  ──HTTP──�
 - TLS 1.2 and TLS 1.3 only (`ssl_protocols TLSv1.2 TLSv1.3`).
 - Strong ciphers (`HIGH:!aNULL:!MD5:!RC4:!3DES`).
 - HSTS / OCSP stapling can be added per organisational policy.
-- Server cert / key live in `/etc/coso-webscript/certs/` and are owned `root:root`,
+- Server cert / key live in `/etc/data-collector/certs/` and are owned `root:root`,
   mode `0600` on the key, `0644` on the cert.
 
 ## Client certificate verification (mTLS)
@@ -65,20 +65,20 @@ benefit and you must reload the process for every cert change.
 ## File-system permissions
 
 ```
-/var/lib/coso-webscript/raw          0700 cosoweb cosoweb
-/var/lib/coso-webscript/normalized   0700 cosoweb cosoweb
-/var/lib/coso-webscript/quarantine   0700 cosoweb cosoweb
-/etc/coso-webscript.env              0640 root cosoweb
-/etc/coso-webscript/certs/*.key      0600 root root
-/etc/coso-webscript/certs/*.crt      0644 root root
+/var/lib/data-collector/raw          0700 appuser appuser
+/var/lib/data-collector/normalized   0700 appuser appuser
+/var/lib/data-collector/quarantine   0700 appuser appuser
+/etc/data-collector.env              0640 root appuser
+/etc/data-collector/certs/*.key      0600 root root
+/etc/data-collector/certs/*.crt      0644 root root
 ```
 
-The Docker image runs as the unprivileged `cosoweb` user. The systemd unit sets
+The Docker image runs as the unprivileged `appuser` user. The systemd unit sets
 `NoNewPrivileges=true`, `PrivateTmp=true`, `ProtectSystem=full`,
-`ProtectHome=true`, and `ReadWritePaths=/var/lib/coso-webscript`.
+`ProtectHome=true`, and `ReadWritePaths=/var/lib/data-collector`.
 
 ## Secrets
 
 No secrets are committed. All trust material is loaded from
-`/etc/coso-webscript/certs/` (path is environment-driven). The `.env.example`
+`/etc/data-collector/certs/` (path is environment-driven). The `.env.example`
 file documents every knob but contains no live values.

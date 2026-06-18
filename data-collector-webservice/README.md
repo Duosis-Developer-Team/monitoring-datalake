@@ -1,11 +1,30 @@
-# kocsistem-coso-webscript
+# data-collector-webservice
 
-KoçSistem COSO custom webscript receiver. A FastAPI service that accepts OBM-format
-JSON metric payloads over HTTPS POST (port 443, TLS 1.2+, certificate-based auth),
-audits the raw body, normalizes known metric classes, and returns `200 OK`.
+Generic data collector web service. A FastAPI service that accepts pushed metric
+payloads over HTTPS POST (TLS 1.2+, mTLS), audits the raw body, normalizes known
+metric classes, and writes Airflow-compatible staging files into the shared NFS
+`pending/` directory — where the `generic_postgres_writer` DAG picks them up and
+loads them into the PostgreSQL datalake.
 
-The service replaces only the **OBM → COSO destination side**. The OBM agent's
-collection logic on monitored nodes is untouched.
+The service is **source-agnostic**. The first (and currently only) ingest source
+is `obm_agent` (OpenText OBM agents). Future sources plug in as sibling packages
+under `app/sources/` without touching the core services.
+
+## Data flow
+
+```
+OBM agent ──HTTPS/mTLS──▶ Ingress (mTLS termination) ──▶ data-collector pod(s)
+                                                              │
+                          archive raw ──▶ normalize ──▶ staging sink
+                                                              │
+                                   NFS  {STAGING_FOLDER_PATH}/pending/*.json
+                                                              │
+                                   Airflow generic_postgres_writer ──▶ PostgreSQL
+```
+
+The staging files use the exact `{meta, data}` contract documented in
+[../docs/STAGING_FORMAT.md](../docs/STAGING_FORMAT.md), so the existing writer
+loads them with no changes — one file per target table per request.
 
 ## Endpoints
 
@@ -13,8 +32,7 @@ collection logic on monitored nodes is untouched.
 |---|---|---|
 | `GET`  | `/health` | Liveness probe. |
 | `GET`  | `/ready`  | Readiness probe (ensures storage dirs are writable). |
-| `POST` | `/webscript/coso/metrics` | Canonical OBM ingest endpoint. |
-| `POST` | `/api/v1/obm/metrics`     | Alias kept for parity with OBM-side naming. |
+| `POST` | `/api/v1/obm/metrics` | OBM agent metric ingest. |
 
 ### Success response
 
@@ -41,13 +59,14 @@ collection logic on monitored nodes is untouched.
 ## Run locally
 
 ```bash
-cd kocsistem-coso-webscript
+cd data-collector-webservice
 python3 -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt
 cp .env.example .env
-# point storage paths at a writable dir for dev:
-sed -i.bak 's|/var/lib/coso-webscript|./var|g' .env
+# point storage paths at a writable dir for dev, and enable the jsonl sink too:
+sed -i.bak 's|/var/lib/data-collector|./var|; s|/nfs/airflow-staging|./var/staging|' .env
+echo 'OUTPUT_SINKS=staging,jsonl' >> .env
 uvicorn app.main:app --reload --host 127.0.0.1 --port 8000
 ```
 
@@ -55,9 +74,10 @@ Smoke test:
 
 ```bash
 curl -s http://127.0.0.1:8000/health
-curl -s -X POST http://127.0.0.1:8000/webscript/coso/metrics \
+curl -s -X POST http://127.0.0.1:8000/api/v1/obm/metrics \
      -H 'Content-Type: application/json' \
-     --data @../kocsistem_coso_webscript_cto_pack/reference/sample_obm_payload_assumed_shape.json
+     --data @tests/fixtures/sample_obm_payload.json
+# → a {meta,data} file appears under ./var/staging/pending/
 ```
 
 ## Run tests
@@ -66,73 +86,83 @@ curl -s -X POST http://127.0.0.1:8000/webscript/coso/metrics \
 pytest -q
 ```
 
-## Deploy behind HTTPS 443 (mTLS)
+## Deploy on Kubernetes (production target)
 
-Production architecture: **OBM → Nginx (443, mTLS) → FastAPI (127.0.0.1:8000)**.
+Deploys into the same Kubernetes cluster as Airflow, with multiple replicas
+spread across the worker nodes, behind an mTLS-terminating Ingress. Manifests are
+in [deploy/k8s/](deploy/k8s/); see [docs/KUBERNETES.md](docs/KUBERNETES.md) for
+the full procedure (NFS PVCs shared with Airflow, mTLS secrets, HPA/PDB).
 
-1. Provision certificates:
-   - `server.crt` + `server.key` for the public-facing host.
-   - `client_ca.crt` — the CA that signs the OBM agent's client certificate.
-2. Copy [deploy/nginx.conf](deploy/nginx.conf) into the Nginx site directory and
-   point its `ssl_*` directives at the certificate files.
-3. Validate with `nginx -t` and reload.
-4. Install the app (see [docs/RUNBOOK.md](docs/RUNBOOK.md)).
-5. Set `ENFORCE_PROXY_MTLS_HEADER=true` and (optionally) populate
-   `ALLOWED_CLIENT_CERT_SUBJECTS` or `ALLOWED_CLIENT_CERT_FINGERPRINTS` so the
-   app double-checks the proxy's verdict.
+```bash
+# after filling in image, hostnames, NFS server/path, and secrets:
+kubectl apply -k deploy/k8s/
+```
 
-For purely local mTLS testing, run `scripts/generate_test_certs.sh` to create a
-throw-away CA, server, and client certificate set, then `docker compose -f
-deploy/docker-compose.yml up --build`.
+## Deploy behind HTTPS 443 (same-host / systemd or docker-compose)
+
+Alternative layout: **OBM → Nginx (443, mTLS) → FastAPI (127.0.0.1:8000)**.
+See [deploy/nginx.conf](deploy/nginx.conf), [deploy/systemd.service](deploy/systemd.service),
+and [docs/RUNBOOK.md](docs/RUNBOOK.md). For local mTLS testing, run
+`scripts/generate_test_certs.sh` then
+`docker compose -f deploy/docker-compose.yml up --build`.
 
 ## Certificate auth — how it works
 
-- TLS termination and client-certificate verification happen at Nginx.
-- Nginx exposes the verification verdict to the app via headers:
-  - `X-SSL-Client-Verify` (must be `SUCCESS`),
-  - `X-SSL-Client-Subject`,
-  - `X-SSL-Client-Issuer`,
-  - `X-SSL-Client-Fingerprint`.
-- The FastAPI app re-checks these headers when `ENFORCE_PROXY_MTLS_HEADER=true`,
-  matching against optional subject / fingerprint allowlists.
-- The app port (`8000`) must never be exposed to the internet. Bind it to
-  `127.0.0.1` or to a container-internal network only reachable by Nginx.
+- TLS termination and client-certificate verification happen at the proxy
+  (Kubernetes Ingress, or Nginx in the same-host layout).
+- The proxy forwards its verdict to the app via headers:
+  `X-SSL-Client-Verify` (must be `SUCCESS`), `X-SSL-Client-Subject`,
+  `X-SSL-Client-Issuer`, `X-SSL-Client-Fingerprint`.
+- The app re-checks these when `ENFORCE_PROXY_MTLS_HEADER=true`, matching against
+  optional subject / fingerprint allowlists.
+- The app port (`8000`) must never be exposed to the internet.
 
 See [docs/SECURITY.md](docs/SECURITY.md) for the full security model.
 
-## Storage layout
+## Output & storage layout
 
 ```
-$RAW_PAYLOAD_DIR/YYYY/MM/DD/<request_id>.json       # exact bytes received
-$NORMALIZED_JSONL_PATH                              # append-only JSON Lines
-$QUARANTINE_DIR/YYYY/MM/DD/<request_id>.json        # weak / failed records
+{STAGING_FOLDER_PATH}/pending/<source>_<table>_<request_id>.json  # writer input (primary)
+$RAW_PAYLOAD_DIR/YYYY/MM/DD/<request_id>.json                     # exact bytes received (audit)
+$QUARANTINE_DIR/YYYY/MM/DD/<request_id>.json                      # weak / failed records
+$NORMALIZED_JSONL_PATH                                            # JSONL (dev sink only)
 ```
 
-Raw payloads are always written before normalization runs, so mapping bugs are
+`OUTPUT_SINKS` selects which sinks run (`staging`, `jsonl`, or both). Staging is
+the production path and is safe under many replicas (one atomically-written file
+per request). The shared JSONL file is **not** replica-safe — dev/single-node
+only. Raw payloads are always archived before normalization, so mapping bugs are
 recoverable by replaying the audit archive after a fix.
 
 ## Project layout
 
 ```
 app/
-  main.py                       FastAPI app + lifespan
-  core/config.py                pydantic-settings configuration
+  main.py                       FastAPI app + lifespan; wires sources → sinks
+  core/config.py                pydantic-settings configuration (source-agnostic)
   core/logging.py               JSON log formatter
   core/security.py              proxy mTLS header extraction + enforcement
-  api/routes.py                 /health, /ready, /webscript/coso/metrics, /api/v1/obm/metrics
-  services/storage_service.py   raw archive, JSONL sink, quarantine
-  services/normalization_service.py  envelope/class/metric mapping
-  services/ingestion_service.py orchestrates archive → normalize → persist
+  api/routes.py                 /health, /ready (system routes)
+  api/ingest.py                 shared archive→normalize→persist HTTP handler
+  services/ingestion_service.py orchestration (source-agnostic)
+  services/storage_service.py   raw archive, quarantine, StagingSink, JsonlSink
   schemas/payload.py            response models
-  mappings/collection_policy_summary.json  source-of-truth mapping
-tests/                          pytest suite covering all CTO acceptance criteria
+  sources/
+    obm_agent/
+      normalization.py          OBM envelope/class/metric mapping
+      staging.py                normalized records → {meta,data} staging files
+      routes.py                 POST /api/v1/obm/metrics
+      mappings/collection_policy_summary.json   OBM mapping source of truth
+tests/                          pytest suite (+ fixtures/)
 scripts/                        dev cert generation + curl smoke script
-deploy/                         nginx.conf, Dockerfile, docker-compose.yml, systemd unit
-docs/                           RUNBOOK, SECURITY, API_CONTRACT
+deploy/                         Dockerfile, docker-compose, nginx.conf, systemd, k8s/
+docs/                           API_CONTRACT, RUNBOOK, SECURITY, KUBERNETES, STAGING_OUTPUT
 ```
 
 ## Documentation
 
 - [docs/API_CONTRACT.md](docs/API_CONTRACT.md) — request/response contract.
-- [docs/RUNBOOK.md](docs/RUNBOOK.md) — production install, restart, replay.
+- [docs/STAGING_OUTPUT.md](docs/STAGING_OUTPUT.md) — how payloads become writer files.
+- [docs/KUBERNETES.md](docs/KUBERNETES.md) — multi-replica K8s deployment.
+- [docs/RUNBOOK.md](docs/RUNBOOK.md) — same-host install, restart, replay.
 - [docs/SECURITY.md](docs/SECURITY.md) — TLS / mTLS / hardening details.

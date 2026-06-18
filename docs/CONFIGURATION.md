@@ -59,6 +59,13 @@ Used by the writer. The connection id is configurable via the
 | `zabbix_history_overlap_sec` | `60` | Window overlap in seconds (gap prevention) |
 | `zabbix_history_chunk` | `1000` | `item.get` pagination size |
 
+### `zabbix_metadata_collector`
+
+| Key | Default | Description |
+|-----|---------|-------------|
+| `zabbix_metadata_schedule` | `@hourly` | Collector schedule |
+| `zabbix_metadata_chunk` | `1000` | `template.get` / `item.get` pagination size |
+
 ### `generic_postgres_writer`
 
 | Key | Default | Description |
