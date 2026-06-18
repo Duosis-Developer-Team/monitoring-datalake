@@ -1,0 +1,25 @@
+{
+  "CollectionConfigName": "OOTB_AgentMetricCollection",
+  "collection_data_flow": "OBM_AGENT_TO_CUSTOM_WEBSCRIPT",
+  "collection_type": "metric",
+  "tenant_id": "example-tenant",
+  "MonitoredSystem": "server01.example.local",
+  "MonitoredSystemID": "server01",
+  "MonitoredSystemTimezone": "+03:00",
+  "node_ip_type": "ipv4",
+  "node_ipv4_address": "10.0.0.10",
+  "producer_instance_id": "obm-agent-01",
+  "producer_instance_type": "OBM_AGENT",
+  "timestamp_utc": 1779638400,
+  "datasource": "SCOPE",
+  "class_name": "GLOBAL",
+  "metrics": {
+    "GBL_CPU_TOTAL_UTIL": 42.3,
+    "GBL_CPU_USER_MODE_UTIL": 12.1,
+    "GBL_MEM_UTIL": 68.4,
+    "GBL_DISK_PHYS_BYTE_RATE": 1024.5,
+    "GBL_SYSTEM_UPTIME_SECONDS": 86400,
+    "GBL_OSNAME": "Linux",
+    "GBL_SYSTEM_ID": "server01"
+  }
+}

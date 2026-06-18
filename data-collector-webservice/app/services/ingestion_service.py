@@ -2,19 +2,20 @@
 
 Failures during normalization never block ingestion: the raw payload is always
 archived first, and only the normalized output (or quarantine writes) can fail
-softly. That matches the CTO requirement that mapping bugs must never lose data.
+softly, so mapping bugs never lose data — the audit archive can be replayed.
+
+The service is source-agnostic: the ``normalizer`` and the ``identity_check``
+predicate are injected by whichever ingest source mounted the route.
 """
 
 from __future__ import annotations
 
-import json
 from dataclasses import dataclass
 from datetime import datetime, timezone
-from typing import Any, Dict, List, Optional
+from typing import Any, Callable, Dict, List, Optional, Protocol
 
 from ..core.config import Settings
 from ..core.logging import get_logger
-from .normalization_service import Normalizer, record_has_strong_identity
 from .storage_service import (
     NormalizedSink,
     archive_raw_payload,
@@ -23,6 +24,22 @@ from .storage_service import (
 
 
 logger = get_logger(__name__)
+
+
+class Normalizer(Protocol):
+    def normalize(
+        self,
+        payload: Any,
+        request_id: str,
+        raw_payload_ref: Optional[str] = None,
+        received_at: Optional[datetime] = None,
+    ) -> List[Dict[str, Any]]: ...
+
+
+# A source-provided predicate deciding whether a normalized record carries a
+# strong enough identity to persist (vs. quarantine). Defaults to "always
+# strong" when a source does not supply one.
+IdentityCheck = Callable[[Dict[str, Any]], bool]
 
 
 @dataclass
@@ -44,10 +61,12 @@ class IngestionService:
         settings: Settings,
         normalizer: Normalizer,
         sink: NormalizedSink,
+        identity_check: Optional[IdentityCheck] = None,
     ):
         self._settings = settings
         self._normalizer = normalizer
         self._sink = sink
+        self._identity_check = identity_check or (lambda record: True)
 
     def ingest(
         self,
@@ -89,7 +108,7 @@ class IngestionService:
                 normalization_error=str(exc),
             )
 
-        weak_records = [r for r in records if not record_has_strong_identity(r)]
+        weak_records = [r for r in records if not self._identity_check(r)]
 
         if weak_records and self._settings.strict_validation:
             quarantine_ref = write_quarantine(

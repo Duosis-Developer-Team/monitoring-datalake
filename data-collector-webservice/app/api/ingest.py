@@ -1,9 +1,8 @@
-"""FastAPI routes for health and OBM metric ingestion.
+"""Source-agnostic metric ingestion handler.
 
-Two POST paths are exposed for the metrics endpoint:
-  - /webscript/coso/metrics  (canonical, per CTO pack)
-  - /api/v1/obm/metrics      (alias for parity with the OBM-side naming)
-Both delegate to the same handler.
+Every ingest source (obm_agent today, others later) mounts its own POST route
+but delegates here, so cert enforcement, body limits, JSON parsing, and the
+archive→normalize→persist flow stay identical across sources.
 """
 
 from __future__ import annotations
@@ -12,11 +11,10 @@ import json
 import uuid
 from typing import Any
 
-from fastapi import APIRouter, Depends, HTTPException, Request, status
+from fastapi import Request, status
 from fastapi.responses import JSONResponse
 
-from .. import __version__
-from ..core.config import Settings, get_settings
+from ..core.config import Settings
 from ..core.logging import get_logger
 from ..core.security import (
     AuthError,
@@ -24,45 +22,27 @@ from ..core.security import (
     enforce_mtls,
     extract_client_cert_info,
 )
-from ..schemas.payload import (
-    HealthResponse,
-    IngestionAcceptedResponse,
-    IngestionErrorResponse,
-)
+from ..schemas.payload import IngestionAcceptedResponse, IngestionErrorResponse
 from ..services.ingestion_service import IngestionService
 
 
 logger = get_logger(__name__)
-router = APIRouter()
 
 
-def _new_request_id() -> str:
+def new_request_id() -> str:
     return str(uuid.uuid4())
 
 
-def _get_ingestion_service(request: Request) -> IngestionService:
-    service: IngestionService = request.app.state.ingestion_service
-    return service
+def get_ingestion_service(request: Request) -> IngestionService:
+    return request.app.state.ingestion_service
 
 
-@router.get("/health", response_model=HealthResponse)
-def health(settings: Settings = Depends(get_settings)) -> HealthResponse:
-    return HealthResponse(status="ok", service=settings.app_name, version=__version__)
-
-
-@router.get("/ready", response_model=HealthResponse)
-def ready(settings: Settings = Depends(get_settings)) -> HealthResponse:
-    """Readiness check: ensures storage directories exist and are writable."""
-    settings.ensure_runtime_dirs()
-    return HealthResponse(status="ready", service=settings.app_name, version=__version__)
-
-
-async def _handle_metrics(
+async def handle_metrics(
     request: Request,
     settings: Settings,
     ingestion: IngestionService,
 ) -> JSONResponse:
-    request_id = _new_request_id()
+    request_id = new_request_id()
     client_ip = request.client.host if request.client else None
 
     cert_info: ClientCertificateInfo = extract_client_cert_info(request, settings)
@@ -80,9 +60,7 @@ async def _handle_metrics(
         )
         return JSONResponse(
             status_code=status.HTTP_401_UNAUTHORIZED,
-            content=IngestionErrorResponse(
-                request_id=request_id, error=exc.reason
-            ).model_dump(),
+            content=IngestionErrorResponse(request_id=request_id, error=exc.reason).model_dump(),
         )
 
     raw_body = await request.body()
@@ -118,17 +96,13 @@ async def _handle_metrics(
         )
         return JSONResponse(
             status_code=status.HTTP_400_BAD_REQUEST,
-            content=IngestionErrorResponse(
-                request_id=request_id, error="malformed_json"
-            ).model_dump(),
+            content=IngestionErrorResponse(request_id=request_id, error="malformed_json").model_dump(),
         )
 
     if parsed_payload is None:
         return JSONResponse(
             status_code=status.HTTP_400_BAD_REQUEST,
-            content=IngestionErrorResponse(
-                request_id=request_id, error="empty_body"
-            ).model_dump(),
+            content=IngestionErrorResponse(request_id=request_id, error="empty_body").model_dump(),
         )
 
     result = ingestion.ingest(request_id, raw_body, parsed_payload)
@@ -164,21 +138,3 @@ async def _handle_metrics(
         quarantined=result.quarantined,
     )
     return JSONResponse(status_code=status.HTTP_200_OK, content=response_body.model_dump())
-
-
-@router.post("/webscript/coso/metrics")
-async def post_metrics_canonical(
-    request: Request,
-    settings: Settings = Depends(get_settings),
-    ingestion: IngestionService = Depends(_get_ingestion_service),
-) -> JSONResponse:
-    return await _handle_metrics(request, settings, ingestion)
-
-
-@router.post("/api/v1/obm/metrics")
-async def post_metrics_alias(
-    request: Request,
-    settings: Settings = Depends(get_settings),
-    ingestion: IngestionService = Depends(_get_ingestion_service),
-) -> JSONResponse:
-    return await _handle_metrics(request, settings, ingestion)

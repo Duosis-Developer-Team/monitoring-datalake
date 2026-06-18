@@ -12,7 +12,7 @@ def _last_jsonl_lines(path: Path):
 
 
 def test_post_single_record_returns_200(client, sample_global_payload):
-    response = client.post("/webscript/coso/metrics", json=sample_global_payload)
+    response = client.post("/api/v1/obm/metrics", json=sample_global_payload)
     assert response.status_code == 200
     body = response.json()
     assert body["status"] == "ok"
@@ -23,7 +23,7 @@ def test_post_single_record_returns_200(client, sample_global_payload):
 
 def test_post_array_envelope_returns_200(client, sample_global_payload):
     response = client.post(
-        "/webscript/coso/metrics",
+        "/api/v1/obm/metrics",
         json=[sample_global_payload, sample_global_payload],
     )
     assert response.status_code == 200
@@ -33,7 +33,7 @@ def test_post_array_envelope_returns_200(client, sample_global_payload):
 
 def test_post_records_wrapper_returns_200(client, sample_global_payload):
     response = client.post(
-        "/webscript/coso/metrics",
+        "/api/v1/obm/metrics",
         json={"records": [sample_global_payload]},
     )
     assert response.status_code == 200
@@ -42,7 +42,7 @@ def test_post_records_wrapper_returns_200(client, sample_global_payload):
 
 def test_post_data_wrapper_returns_200(client, sample_global_payload):
     response = client.post(
-        "/webscript/coso/metrics",
+        "/api/v1/obm/metrics",
         json={"data": [sample_global_payload]},
     )
     assert response.status_code == 200
@@ -57,7 +57,7 @@ def test_obm_alias_route_works(client, sample_global_payload):
 
 def test_malformed_json_returns_400(client):
     response = client.post(
-        "/webscript/coso/metrics",
+        "/api/v1/obm/metrics",
         data="{not valid json",
         headers={"Content-Type": "application/json"},
     )
@@ -70,7 +70,7 @@ def test_malformed_json_returns_400(client):
 
 def test_empty_body_returns_400(client):
     response = client.post(
-        "/webscript/coso/metrics",
+        "/api/v1/obm/metrics",
         data=b"",
         headers={"Content-Type": "application/json"},
     )
@@ -78,7 +78,7 @@ def test_empty_body_returns_400(client):
 
 
 def test_raw_payload_is_persisted(client, sample_global_payload):
-    response = client.post("/webscript/coso/metrics", json=sample_global_payload)
+    response = client.post("/api/v1/obm/metrics", json=sample_global_payload)
     assert response.status_code == 200
 
     settings = client.app.state.test_settings
@@ -90,7 +90,7 @@ def test_raw_payload_is_persisted(client, sample_global_payload):
 
 
 def test_normalized_jsonl_is_written(client, sample_global_payload):
-    response = client.post("/webscript/coso/metrics", json=sample_global_payload)
+    response = client.post("/api/v1/obm/metrics", json=sample_global_payload)
     assert response.status_code == 200
 
     settings = client.app.state.test_settings
@@ -100,11 +100,11 @@ def test_normalized_jsonl_is_written(client, sample_global_payload):
     assert rec["class_name"] == "GLOBAL"
     assert rec["target_table"] == "opsb_agent_node"
     assert rec["metrics"]["cpu_util_pct"] == 42.3
-    assert rec["common"]["node_fqdn"] == "server01.kocsistem.local"
+    assert rec["common"]["node_fqdn"] == "server01.example.local"
 
 
 def test_unknown_metric_keys_go_to_extra_metrics(client, sample_global_payload):
-    response = client.post("/webscript/coso/metrics", json=sample_global_payload)
+    response = client.post("/api/v1/obm/metrics", json=sample_global_payload)
     assert response.status_code == 200
 
     settings = client.app.state.test_settings
@@ -121,7 +121,7 @@ def test_strict_validation_missing_identity_returns_422(client_factory):
         "class_name": "GLOBAL",
         "metrics": {"GBL_CPU_TOTAL_UTIL": 50.0},
     }
-    response = client.post("/webscript/coso/metrics", json=payload)
+    response = client.post("/api/v1/obm/metrics", json=payload)
     assert response.status_code == 422
     body = response.json()
     assert body["error"] == "validation_error"
@@ -136,7 +136,7 @@ def test_non_strict_missing_identity_returns_200_and_quarantines(client_factory)
         "class_name": "GLOBAL",
         "metrics": {"GBL_CPU_TOTAL_UTIL": 50.0},
     }
-    response = client.post("/webscript/coso/metrics", json=payload)
+    response = client.post("/api/v1/obm/metrics", json=payload)
     assert response.status_code == 200
     body = response.json()
     assert body["quarantined"] is True
@@ -149,7 +149,7 @@ def test_non_strict_missing_identity_returns_200_and_quarantines(client_factory)
 def test_mtls_enforced_missing_header_returns_401(client_factory):
     client = client_factory(enforce_proxy_mtls_header=True)
     response = client.post(
-        "/webscript/coso/metrics",
+        "/api/v1/obm/metrics",
         json={"class_name": "GLOBAL", "metrics": {}},
     )
     assert response.status_code == 401
@@ -160,7 +160,7 @@ def test_mtls_enforced_missing_header_returns_401(client_factory):
 def test_mtls_enforced_success_header_passes(client_factory, sample_global_payload):
     client = client_factory(enforce_proxy_mtls_header=True)
     response = client.post(
-        "/webscript/coso/metrics",
+        "/api/v1/obm/metrics",
         json=sample_global_payload,
         headers={
             "X-SSL-Client-Verify": "SUCCESS",
@@ -177,7 +177,7 @@ def test_mtls_subject_allowlist_rejects_unknown(client_factory, sample_global_pa
         allowed_client_cert_subjects="obm-agent-prod",
     )
     response = client.post(
-        "/webscript/coso/metrics",
+        "/api/v1/obm/metrics",
         json=sample_global_payload,
         headers={
             "X-SSL-Client-Verify": "SUCCESS",
@@ -191,5 +191,5 @@ def test_mtls_subject_allowlist_rejects_unknown(client_factory, sample_global_pa
 def test_body_size_limit_enforced(client_factory):
     client = client_factory(max_body_bytes=64)
     huge = {"records": [{"metrics": {f"GBL_M_{i}": i for i in range(200)}}]}
-    response = client.post("/webscript/coso/metrics", json=huge)
+    response = client.post("/api/v1/obm/metrics", json=huge)
     assert response.status_code == 413

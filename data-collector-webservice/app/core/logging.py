@@ -1,4 +1,4 @@
-"""Structured JSON logging for the webscript receiver."""
+"""Structured JSON logging for the data collector web service."""
 
 from __future__ import annotations
 

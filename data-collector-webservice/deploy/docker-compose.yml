@@ -1,0 +1,41 @@
+services:
+  app:
+    build:
+      context: ..
+      dockerfile: deploy/Dockerfile
+    image: data-collector-webservice:local
+    container_name: data-collector-app
+    restart: unless-stopped
+    env_file:
+      - ../.env
+    environment:
+      RAW_PAYLOAD_DIR: /var/lib/data-collector/raw
+      QUARANTINE_DIR: /var/lib/data-collector/quarantine
+      NORMALIZED_JSONL_PATH: /var/lib/data-collector/normalized/metrics.jsonl
+      # Local staging dir for compose testing; in production this is the shared NFS PVC.
+      STAGING_FOLDER_PATH: /nfs/airflow-staging
+      OUTPUT_SINKS: staging,jsonl
+    volumes:
+      - collector-data:/var/lib/data-collector
+      - collector-staging:/nfs/airflow-staging
+    expose:
+      - "8000"
+    # The app port is intentionally not published. In production it sits behind
+    # the nginx service below; for local debugging you can publish 8000 manually.
+
+  nginx:
+    image: nginx:1.27-alpine
+    container_name: data-collector-nginx
+    restart: unless-stopped
+    depends_on:
+      - app
+    ports:
+      - "443:443"
+      - "80:80"
+    volumes:
+      - ./nginx.conf:/etc/nginx/conf.d/default.conf:ro
+      - ./certs:/etc/data-collector/certs:ro
+
+volumes:
+  collector-data:
+  collector-staging:

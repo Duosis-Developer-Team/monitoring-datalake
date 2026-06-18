@@ -2,13 +2,12 @@
 
 from __future__ import annotations
 
-from app.services.normalization_service import Normalizer, NormalizationConfig
-from pathlib import Path
+from app.sources.obm_agent import MAPPING_PATH
+from app.sources.obm_agent.normalization import Normalizer, NormalizationConfig
 
 
 def _normalizer() -> Normalizer:
-    mapping_path = Path(__file__).resolve().parent.parent / "app" / "mappings" / "collection_policy_summary.json"
-    return Normalizer(NormalizationConfig.from_path(mapping_path))
+    return Normalizer(NormalizationConfig.from_path(MAPPING_PATH))
 
 
 def test_gbl_cpu_total_util_maps_to_cpu_util_pct():

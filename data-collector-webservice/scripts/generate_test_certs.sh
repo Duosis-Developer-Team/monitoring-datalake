@@ -18,7 +18,7 @@ cd "$OUT_DIR"
 echo "Generating local root CA..."
 openssl genrsa -out ca.key 4096
 openssl req -x509 -new -nodes -key ca.key -sha256 -days "$DAYS" \
-  -subj "/CN=COSO-Webscript-Dev-Root-CA" \
+  -subj "/CN=Data-Collector-Dev-Root-CA" \
   -out ca.crt
 
 echo "Generating server certificate (CN=$SERVER_CN)..."

@@ -1,7 +1,7 @@
 """Pydantic schemas for inbound OBM payloads and outbound responses.
 
-These schemas are deliberately permissive. The reference JSON in the CTO pack is a
-collection-policy file, not a guaranteed runtime POST sample, so the parser must accept
+These schemas are deliberately permissive. The OBM mapping file is a
+collection-policy definition, not a guaranteed runtime POST sample, so the parser must accept
 multiple envelope shapes (single record, list, or wrapper). Strict validation of
 identity fields is configurable via ``STRICT_VALIDATION``.
 """

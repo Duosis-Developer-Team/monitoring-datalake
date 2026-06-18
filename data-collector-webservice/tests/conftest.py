@@ -1,31 +1,37 @@
 """Pytest fixtures: per-test isolated storage dirs and configurable settings.
 
-Each test gets its own ``tmp_path``-backed raw/normalized/quarantine layout so that
-state can never leak between tests. The fixture rebuilds ``app.state.ingestion_service``
-so settings changes (e.g. ``strict_validation``) actually take effect.
+Each test gets its own ``tmp_path``-backed raw/quarantine/staging/jsonl layout so
+that state can never leak between tests. The fixture rebuilds
+``app.state.ingestion_service`` so settings changes (e.g. ``strict_validation``)
+actually take effect.
 """
 
 from __future__ import annotations
 
-import json
 from pathlib import Path
-from typing import Iterator
 
 import pytest
 from fastapi.testclient import TestClient
 
 from app.core import config as config_module
-from app.main import create_app
+from app.main import _build_sinks, create_app
 from app.services.ingestion_service import IngestionService
-from app.services.normalization_service import Normalizer, NormalizationConfig
-from app.services.storage_service import JsonlSink
+from app.sources.obm_agent import MAPPING_PATH
+from app.sources.obm_agent.normalization import (
+    NormalizationConfig,
+    Normalizer,
+    record_has_strong_identity,
+)
 
 
 def _build_settings(tmp_path: Path, **overrides) -> config_module.Settings:
     base = {
         "raw_payload_dir": tmp_path / "raw",
-        "normalized_jsonl_path": tmp_path / "normalized" / "metrics.jsonl",
         "quarantine_dir": tmp_path / "quarantine",
+        "normalized_jsonl_path": tmp_path / "normalized" / "metrics.jsonl",
+        "staging_folder_path": tmp_path / "staging",
+        # Exercise both the production staging sink and the dev jsonl sink.
+        "output_sinks": ["staging", "jsonl"],
         "trust_proxy_cert_headers": True,
         "enforce_proxy_mtls_header": False,
         "strict_validation": False,
@@ -50,8 +56,7 @@ def settings(settings_factory) -> config_module.Settings:
 
 @pytest.fixture
 def normalizer() -> Normalizer:
-    mapping_path = Path(__file__).resolve().parent.parent / "app" / "mappings" / "collection_policy_summary.json"
-    return Normalizer(NormalizationConfig.from_path(mapping_path))
+    return Normalizer(NormalizationConfig.from_path(MAPPING_PATH))
 
 
 @pytest.fixture
@@ -65,12 +70,13 @@ def client_factory(settings_factory, normalizer):
         # Override the cached settings getter so route handlers see our test settings.
         app = create_app()
         app.dependency_overrides[config_module.get_settings] = lambda: settings
-        sink = JsonlSink(settings)
-        app.state.ingestion_service = IngestionService(settings, normalizer, sink)
+        sink = _build_sinks(settings)
+        app.state.ingestion_service = IngestionService(
+            settings, normalizer, sink, identity_check=record_has_strong_identity
+        )
         app.state.test_settings = settings  # keep a handle for assertions
 
-        client = TestClient(app)
-        return client
+        return TestClient(app)
 
     return _factory
 
@@ -86,8 +92,8 @@ def sample_global_payload() -> dict:
         "CollectionConfigName": "OOTB_AgentMetricCollection",
         "collection_data_flow": "OBM_AGENT_TO_CUSTOM_WEBSCRIPT",
         "collection_type": "metric",
-        "tenant_id": "kocsistem",
-        "MonitoredSystem": "server01.kocsistem.local",
+        "tenant_id": "example-tenant",
+        "MonitoredSystem": "server01.example.local",
         "MonitoredSystemID": "server01",
         "MonitoredSystemTimezone": "+03:00",
         "node_ip_type": "ipv4",
