@@ -17,5 +17,5 @@ resources:
   - 70-pdb.yaml
 
 images:
-  - name: registry.example.local/data-collector-webservice
+  - name: ghcr.io/duosis-developer-team/data-collector-webservice
     newTag: "0.1.0"

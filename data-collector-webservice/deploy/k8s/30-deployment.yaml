@@ -50,7 +50,7 @@ spec:
                     app.kubernetes.io/name: data-collector-webservice
       containers:
         - name: app
-          image: registry.example.local/data-collector-webservice:0.1.0
+          image: ghcr.io/duosis-developer-team/data-collector-webservice:0.1.0
           imagePullPolicy: IfNotPresent
           ports:
             - name: http
