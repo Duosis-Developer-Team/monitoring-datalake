@@ -1,0 +1,164 @@
+{
+  "uid": "datalake-obm-node",
+  "title": "OBM Agent — Node Overview",
+  "description": "OBM agent node seç; CPU/Mem/disk/filesystem/network metriklerini görselleştir. Kaynak: opsb_agent_* tabloları. Not: OBM node kimliği (node_short_name) Zabbix hostid'den FARKLI kimlik uzayıdır.",
+  "tags": ["datalake", "obm", "node"],
+  "timezone": "browser",
+  "schemaVersion": 39,
+  "version": 1,
+  "editable": true,
+  "graphTooltip": 1,
+  "time": { "from": "now-6h", "to": "now" },
+  "refresh": "1m",
+  "templating": {
+    "list": [
+      {
+        "name": "datasource",
+        "label": "Datasource",
+        "type": "datasource",
+        "query": "postgres",
+        "current": { "text": "Datalake PostgreSQL", "value": "datalake-postgres" },
+        "hide": 0
+      },
+      {
+        "name": "node",
+        "label": "Node",
+        "type": "query",
+        "datasource": { "type": "postgres", "uid": "${datasource}" },
+        "query": "SELECT DISTINCT node_short_name FROM opsb_agent_node ORDER BY 1",
+        "refresh": 2,
+        "sort": 1,
+        "includeAll": false,
+        "multi": false
+      }
+    ]
+  },
+  "panels": [
+    {
+      "id": 1,
+      "type": "table",
+      "title": "Node Bilgisi (son kayıt)",
+      "datasource": { "type": "postgres", "uid": "${datasource}" },
+      "gridPos": { "h": 6, "w": 24, "x": 0, "y": 0 },
+      "options": { "showHeader": true },
+      "fieldConfig": { "defaults": {}, "overrides": [] },
+      "targets": [
+        {
+          "refId": "A",
+          "format": "table",
+          "rawQuery": true,
+          "rawSql": "SELECT node_short_name AS \"Node\", node_fqdn AS \"FQDN\", node_ipv4_address AS \"IPv4\", os_name AS \"OS\", num_cpu AS \"CPU\", round((mem_phys_total/1024/1024/1024)::numeric, 1) AS \"RAM (GB)\", collection_policy_name AS \"Policy\", to_timestamp(timestamp_utc_s) AS \"Zaman\" FROM opsb_agent_node WHERE node_short_name = '$node' ORDER BY timestamp_utc_s DESC LIMIT 1"
+        }
+      ]
+    },
+    {
+      "id": 2,
+      "type": "timeseries",
+      "title": "CPU & Memory Util %",
+      "datasource": { "type": "postgres", "uid": "${datasource}" },
+      "gridPos": { "h": 9, "w": 12, "x": 0, "y": 6 },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percent",
+          "min": 0,
+          "max": 100,
+          "custom": { "drawStyle": "line", "lineWidth": 1, "fillOpacity": 10, "showPoints": "never" }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": { "displayMode": "table", "placement": "bottom", "calcs": ["last", "max", "mean"] },
+        "tooltip": { "mode": "multi", "sort": "desc" }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "format": "time_series",
+          "rawQuery": true,
+          "rawSql": "SELECT to_timestamp(timestamp_utc_s) AS \"time\", cpu_util_pct AS \"CPU %\", mem_util_pct AS \"Mem %\" FROM opsb_agent_node WHERE node_short_name = '$node' AND $__timeFilter(to_timestamp(timestamp_utc_s)) ORDER BY 1"
+        }
+      ]
+    },
+    {
+      "id": 3,
+      "type": "timeseries",
+      "title": "Disk Util % (cihaz başına)",
+      "datasource": { "type": "postgres", "uid": "${datasource}" },
+      "gridPos": { "h": 9, "w": 12, "x": 12, "y": 6 },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percent",
+          "min": 0,
+          "custom": { "drawStyle": "line", "lineWidth": 1, "fillOpacity": 10, "showPoints": "never" }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": { "displayMode": "table", "placement": "bottom", "calcs": ["last", "max"] },
+        "tooltip": { "mode": "multi", "sort": "desc" }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "format": "time_series",
+          "rawQuery": true,
+          "rawSql": "SELECT to_timestamp(timestamp_utc_s) AS \"time\", disk_device_name AS metric, disk_util_pct AS value FROM opsb_agent_disk WHERE node_short_name = '$node' AND disk_util_pct IS NOT NULL AND $__timeFilter(to_timestamp(timestamp_utc_s)) ORDER BY 1"
+        }
+      ]
+    },
+    {
+      "id": 4,
+      "type": "timeseries",
+      "title": "Filesystem Doluluk % (mount başına)",
+      "datasource": { "type": "postgres", "uid": "${datasource}" },
+      "gridPos": { "h": 9, "w": 12, "x": 0, "y": 15 },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "percent",
+          "min": 0,
+          "max": 100,
+          "custom": { "drawStyle": "line", "lineWidth": 1, "fillOpacity": 10, "showPoints": "never" }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": { "displayMode": "table", "placement": "bottom", "calcs": ["last", "max"] },
+        "tooltip": { "mode": "multi", "sort": "desc" }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "format": "time_series",
+          "rawQuery": true,
+          "rawSql": "SELECT to_timestamp(timestamp_utc_s) AS \"time\", fs_dir_name AS metric, fs_util_pct AS value FROM opsb_agent_filesys WHERE node_short_name = '$node' AND fs_util_pct IS NOT NULL AND $__timeFilter(to_timestamp(timestamp_utc_s)) ORDER BY 1"
+        }
+      ]
+    },
+    {
+      "id": 5,
+      "type": "timeseries",
+      "title": "Network Throughput (arayüz başına in/out)",
+      "datasource": { "type": "postgres", "uid": "${datasource}" },
+      "gridPos": { "h": 9, "w": 12, "x": 12, "y": 15 },
+      "fieldConfig": {
+        "defaults": {
+          "unit": "Bps",
+          "custom": { "drawStyle": "line", "lineWidth": 1, "fillOpacity": 8, "showPoints": "never" }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": { "displayMode": "table", "placement": "bottom", "calcs": ["last", "max"] },
+        "tooltip": { "mode": "multi", "sort": "desc" }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "format": "time_series",
+          "rawQuery": true,
+          "rawSql": "SELECT to_timestamp(timestamp_utc_s) AS \"time\", netif_name || ' in' AS metric, netif_in_byte_rate AS value FROM opsb_agent_netif WHERE node_short_name = '$node' AND $__timeFilter(to_timestamp(timestamp_utc_s)) UNION ALL SELECT to_timestamp(timestamp_utc_s) AS \"time\", netif_name || ' out' AS metric, netif_out_byte_rate AS value FROM opsb_agent_netif WHERE node_short_name = '$node' AND $__timeFilter(to_timestamp(timestamp_utc_s)) ORDER BY 1"
+        }
+      ]
+    }
+  ]
+}
