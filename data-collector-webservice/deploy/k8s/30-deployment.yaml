@@ -48,6 +48,11 @@ spec:
                 labelSelector:
                   matchLabels:
                     app.kubernetes.io/name: data-collector-webservice
+      # Uncomment if pulling from a private registry. Create the secret with:
+      #   kubectl -n data-collector create secret docker-registry regcred \
+      #     --docker-server=<registry> --docker-username=<user> --docker-password=<token>
+      # imagePullSecrets:
+      #   - name: regcred
       containers:
         - name: app
           image: registry.example.local/data-collector-webservice:0.1.0
