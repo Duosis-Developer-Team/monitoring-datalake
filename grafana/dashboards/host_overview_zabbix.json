@@ -1,0 +1,132 @@
+{
+  "uid": "datalake-host-zabbix",
+  "title": "Host Overview — Zabbix",
+  "description": "Envanterden host seç, o host'ta toplanan Zabbix metriklerini görselleştir. Kaynak: v_zabbix_history_readable / v_zabbix_host_item_catalog (sql/06_grafana_views.sql).",
+  "tags": ["datalake", "zabbix", "host"],
+  "timezone": "browser",
+  "schemaVersion": 39,
+  "version": 1,
+  "editable": true,
+  "graphTooltip": 1,
+  "time": { "from": "now-6h", "to": "now" },
+  "refresh": "1m",
+  "templating": {
+    "list": [
+      {
+        "name": "datasource",
+        "label": "Datasource",
+        "type": "datasource",
+        "query": "postgres",
+        "current": { "text": "Datalake PostgreSQL", "value": "datalake-postgres" },
+        "hide": 0
+      },
+      {
+        "name": "host",
+        "label": "Host",
+        "type": "query",
+        "datasource": { "type": "postgres", "uid": "${datasource}" },
+        "query": "SELECT name AS \"__text\", hostid AS \"__value\" FROM zabbix_inventory ORDER BY name",
+        "refresh": 2,
+        "sort": 1,
+        "includeAll": false,
+        "multi": false
+      },
+      {
+        "name": "item",
+        "label": "Item",
+        "type": "query",
+        "datasource": { "type": "postgres", "uid": "${datasource}" },
+        "query": "SELECT item_name AS \"__text\", itemid AS \"__value\" FROM v_zabbix_host_item_catalog WHERE hostid = '$host' AND value_type IN (0,3) ORDER BY item_name",
+        "refresh": 2,
+        "sort": 1,
+        "includeAll": true,
+        "allValue": "",
+        "multi": true
+      }
+    ]
+  },
+  "panels": [
+    {
+      "id": 1,
+      "type": "table",
+      "title": "Host Bilgisi",
+      "datasource": { "type": "postgres", "uid": "${datasource}" },
+      "gridPos": { "h": 7, "w": 24, "x": 0, "y": 0 },
+      "options": { "showHeader": true },
+      "fieldConfig": { "defaults": {}, "overrides": [] },
+      "targets": [
+        {
+          "refId": "A",
+          "format": "table",
+          "rawQuery": true,
+          "rawSql": "SELECT name AS \"Host\", status AS \"Durum\", primary_ip AS \"IP\", monitored_by AS \"İzleyen\", host_groups AS \"Gruplar\", templates AS \"Template'ler\", tags AS \"Tag'ler\", collected_at AS \"Toplanma\" FROM zabbix_inventory WHERE hostid = '$host'"
+        }
+      ]
+    },
+    {
+      "id": 2,
+      "type": "timeseries",
+      "title": "Seçili Metrikler (zaman serisi)",
+      "datasource": { "type": "postgres", "uid": "${datasource}" },
+      "gridPos": { "h": 11, "w": 24, "x": 0, "y": 7 },
+      "fieldConfig": {
+        "defaults": {
+          "custom": { "drawStyle": "line", "lineWidth": 1, "fillOpacity": 8, "showPoints": "never" }
+        },
+        "overrides": []
+      },
+      "options": {
+        "legend": { "displayMode": "table", "placement": "bottom", "calcs": ["last", "max", "mean"] },
+        "tooltip": { "mode": "multi", "sort": "desc" }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "format": "time_series",
+          "rawQuery": true,
+          "rawSql": "SELECT ts AS \"time\", item_name AS metric, value_num AS value FROM v_zabbix_history_readable WHERE hostid = '$host' AND itemid IN (${item:singlequote}) AND value_num IS NOT NULL AND $__timeFilter(ts) ORDER BY ts"
+        }
+      ]
+    },
+    {
+      "id": 3,
+      "type": "table",
+      "title": "Son Değerler (host'taki tüm item'lar)",
+      "datasource": { "type": "postgres", "uid": "${datasource}" },
+      "gridPos": { "h": 11, "w": 14, "x": 0, "y": 18 },
+      "options": { "showHeader": true, "sortBy": [{ "displayName": "Zaman", "desc": true }] },
+      "fieldConfig": { "defaults": {}, "overrides": [] },
+      "targets": [
+        {
+          "refId": "A",
+          "format": "table",
+          "rawQuery": true,
+          "rawSql": "SELECT DISTINCT ON (itemid) item_name AS \"Item\", value_text AS \"Son Değer\", units AS \"Birim\", value_type_name AS \"Tip\", ts AS \"Zaman\" FROM v_zabbix_history_readable WHERE hostid = '$host' ORDER BY itemid, ts DESC"
+        }
+      ]
+    },
+    {
+      "id": 4,
+      "type": "timeseries",
+      "title": "Toplama Hacmi (örnek/5dk — veri akıyor mu?)",
+      "datasource": { "type": "postgres", "uid": "${datasource}" },
+      "gridPos": { "h": 11, "w": 10, "x": 14, "y": 18 },
+      "fieldConfig": {
+        "defaults": { "custom": { "drawStyle": "bars", "lineWidth": 1, "fillOpacity": 50 } },
+        "overrides": []
+      },
+      "options": {
+        "legend": { "displayMode": "hidden" },
+        "tooltip": { "mode": "single" }
+      },
+      "targets": [
+        {
+          "refId": "A",
+          "format": "time_series",
+          "rawQuery": true,
+          "rawSql": "SELECT $__timeGroup(ts, '5m') AS \"time\", count(*) AS samples FROM v_zabbix_history_readable WHERE hostid = '$host' AND $__timeFilter(ts) GROUP BY 1 ORDER BY 1"
+        }
+      ]
+    }
+  ]
+}

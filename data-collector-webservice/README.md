@@ -163,6 +163,7 @@ docs/                           API_CONTRACT, RUNBOOK, SECURITY, KUBERNETES, STA
 
 - [docs/API_CONTRACT.md](docs/API_CONTRACT.md) — request/response contract.
 - [docs/STAGING_OUTPUT.md](docs/STAGING_OUTPUT.md) — how payloads become writer files.
-- [docs/KUBERNETES.md](docs/KUBERNETES.md) — multi-replica K8s deployment.
+- [docs/KUBERNETES.md](docs/KUBERNETES.md) — multi-replica K8s deployment (design).
+- [docs/DEPLOYMENT_WALKTHROUGH.md](docs/DEPLOYMENT_WALKTHROUGH.md) — step-by-step rollout: discovery, image build/registry, placeholder map.
 - [docs/RUNBOOK.md](docs/RUNBOOK.md) — same-host install, restart, replay.
 - [docs/SECURITY.md](docs/SECURITY.md) — TLS / mTLS / hardening details.

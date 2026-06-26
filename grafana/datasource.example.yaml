@@ -1,0 +1,35 @@
+# ============================================================================
+# Grafana PostgreSQL datasource — provisioning örneği
+# ----------------------------------------------------------------------------
+# Bu dosyayı Grafana'nın provisioning dizinine kopyala
+# (ör. /etc/grafana/provisioning/datasources/datalake.yaml) veya değerleri
+# Grafana UI > Connections > Data sources > Add > PostgreSQL ekranına gir.
+#
+# ÖNEMLİ: uid sabit tutulmuştur (datalake-postgres). Bu repodaki dashboard
+# JSON'ları datasource'a bu UID üzerinden referans verir; böylece import sonrası
+# datasource'u tek yerden bağlarsın. UID'i değiştirirsen dashboard'lardaki
+# ${datasource} varsayılanını da güncelle.
+#
+# Bağlantı bilgileri datalake ile aynıdır (Airflow pg_writer_conn_id ile aynı DB).
+# ============================================================================
+apiVersion: 1
+
+datasources:
+  - name: Datalake PostgreSQL
+    uid: datalake-postgres
+    type: postgres
+    access: proxy
+    url: <postgres-host>:5432          # ör. postgres.monitoring.svc:5432
+    user: <readonly-or-pipeline-user>  # SELECT yetkisi yeterli
+    jsonData:
+      database: <database-name>
+      sslmode: disable                 # prod'da: require / verify-full
+      postgresVersion: 1500            # PostgreSQL 15.x  (12=>1200, 13=>1300, ...)
+      timescaledb: false               # zabbix_history hypertable'a çevrildiyse true
+      maxOpenConns: 10
+      maxIdleConns: 5
+      connMaxLifetime: 14400
+    secureJsonData:
+      password: <postgres-password>
+    isDefault: false
+    editable: true
