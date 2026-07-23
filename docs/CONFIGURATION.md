@@ -71,7 +71,14 @@ Used by the writer. The connection id is configurable via the
 | Key | Default | Description |
 |-----|---------|-------------|
 | `pg_writer_conn_id` | `postgres_default` | Postgres connection id to use |
-| `pg_writer_batch_size` | `200` | Batch size for insert/upsert |
+| `pg_writer_batch_size` | `1000` | `execute_values` page size for insert/upsert |
+| `pg_writer_time_budget_sec` | `240` | Per-run time budget; remaining files are left for the next run |
+
+> The writer uses `psycopg2.extras.execute_values` (one multi-row `INSERT`), not
+> `executemany` (one round-trip per row). It also stops once
+> `pg_writer_time_budget_sec` is reached and defers the remaining files, so a run
+> never overruns the 5-minute schedule and starts a backlog spiral. Keep the
+> budget below the schedule interval.
 
 ## Setting variables via CLI
 

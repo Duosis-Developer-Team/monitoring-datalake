@@ -153,18 +153,26 @@ with DAG(
                 raise RuntimeError(f"Zabbix API: {res['error']}")
             return res
 
-        # Toplam
-        _raw = zpost({"jsonrpc": "2.0", "method": "host.get",
-                      "params": {"output": ["hostid"], "countOutput": True},
-                      "auth": token, "id": 0}).get("result", "0")
-        total = len(_raw) if isinstance(_raw, list) else int(_raw)
-        print(f"[host.get] Toplam: {total}")
+        # ── Tüm hostid'leri tek çağrıda al ───────────────────────────────────
+        # ÖNEMLİ: Zabbix API'nin get metotları `offset` parametresini
+        # DESTEKLEMEZ (sessizce yok sayılır). Bu yüzden limit+offset sayfalaması
+        # her seferinde aynı ilk sayfayı döndürür. Doğru yöntem: önce tüm ID'leri
+        # hafif tek çağrıyla al, sonra detayları `hostids` parçalarıyla çek.
+        id_rows = zpost({
+            "jsonrpc": "2.0", "method": "host.get",
+            "params": {"output": ["hostid"]},
+            "auth": token, "id": 0,
+        }).get("result", [])
+        all_ids = [h["hostid"] for h in id_rows]
+        total = len(all_ids)
+        print(f"[host.get] Toplam host: {total}")
         if total == 0:
             return []
 
-        # Sayfalama
-        all_hosts, offset = [], 0
-        while offset < total:
+        # ── Detayları hostid parçaları hâlinde çek ───────────────────────────
+        all_hosts = []
+        for start in range(0, total, CHUNK_SIZE):
+            chunk_ids = all_ids[start: start + CHUNK_SIZE]
             batch = zpost({
                 "jsonrpc": "2.0", "method": "host.get",
                 "params": {
@@ -172,31 +180,32 @@ with DAG(
                     "selectInterfaces": ["ip", "port", "type", "main", "available", "error", "dns", "useip"],
                     "selectGroups": ["groupid", "name"],
                     "selectParentTemplates": ["templateid", "name"],
-                    "limit": CHUNK_SIZE, "offset": offset,
+                    "hostids": chunk_ids,
                 },
                 "auth": token, "id": 1,
             }).get("result", [])
-            if not batch:
-                break
             all_hosts.extend(batch)
-            print(f"[host.get] offset={offset} batch={len(batch)} toplam={len(all_hosts)}/{total}")
-            offset += len(batch)
+            print(f"[host.get] {start + len(chunk_ids)}/{total} host çekildi (batch={len(batch)})")
 
-        ids = [h["hostid"] for h in all_hosts]
-
-        macro_map = {h["hostid"]: h.get("macros", []) for h in zpost({
-            "jsonrpc": "2.0", "method": "host.get",
-            "params": {"output": ["hostid"], "hostids": ids,
-                       "selectMacros": ["macro", "value", "type", "description"]},
-            "auth": token, "id": 2,
-        }).get("result", [])}
-
-        tag_map = {h["hostid"]: h.get("tags", []) for h in zpost({
-            "jsonrpc": "2.0", "method": "host.get",
-            "params": {"output": ["hostid"], "hostids": ids,
-                       "selectTags": ["tag", "value"]},
-            "auth": token, "id": 3,
-        }).get("result", [])}
+        # ── Macros ve tags: büyük ortamda tek dev çağrı yerine hostid parçaları ─
+        macro_map: dict = {}
+        tag_map: dict = {}
+        for start in range(0, total, CHUNK_SIZE):
+            chunk_ids = all_ids[start: start + CHUNK_SIZE]
+            for h in zpost({
+                "jsonrpc": "2.0", "method": "host.get",
+                "params": {"output": ["hostid"], "hostids": chunk_ids,
+                           "selectMacros": ["macro", "value", "type", "description"]},
+                "auth": token, "id": 2,
+            }).get("result", []):
+                macro_map[h["hostid"]] = h.get("macros", [])
+            for h in zpost({
+                "jsonrpc": "2.0", "method": "host.get",
+                "params": {"output": ["hostid"], "hostids": chunk_ids,
+                           "selectTags": ["tag", "value"]},
+                "auth": token, "id": 3,
+            }).get("result", []):
+                tag_map[h["hostid"]] = h.get("tags", [])
 
         for h in all_hosts:
             h["macros"] = macro_map.get(h["hostid"], [])

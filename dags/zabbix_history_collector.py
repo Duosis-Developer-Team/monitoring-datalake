@@ -148,38 +148,39 @@ with DAG(
                 raise RuntimeError(f"Zabbix API: {res['error']}")
             return res
 
-        # Toplam item sayısı
-        # Not: status=0 (aktif) item'lar. webitems=True web senaryosu item'larını da dahil eder.
-        # filter yerine düz status kullanımı bazı Zabbix sürümlerinde daha tutarlı.
-        _cnt = zpost({
+        # ── Tüm itemid'leri tek hafif çağrıda al ─────────────────────────────
+        # ÖNEMLİ: Zabbix API'nin get metotları `offset` parametresini
+        # DESTEKLEMEZ (sessizce yok sayılır) → limit+offset her seferinde aynı
+        # ilk sayfayı döndürür. Doğru yöntem: önce tüm ID'leri al, sonra
+        # detayları `itemids` parçalarıyla çek.
+        # Not: webitems=True web senaryosu item'larını, monitored=True yalnızca
+        # aktif host'lardaki aktif item'ları dahil eder.
+        id_rows = zpost({
             "jsonrpc": "2.0", "method": "item.get",
-            "params": {"output": ["itemid"], "countOutput": True,
-                       "webitems": True, "monitored": True},
+            "params": {"output": ["itemid"], "webitems": True, "monitored": True},
             "auth": token, "id": 0,
-        }).get("result", "0")
-        total = len(_cnt) if isinstance(_cnt, list) else int(_cnt)
+        }).get("result", [])
+        all_item_ids = [r["itemid"] for r in id_rows]
+        total = len(all_item_ids)
         print(f"[item.get] Toplam monitored item: {total}")
         if total == 0:
             return {"by_type": {}, "host_of": {}}
 
-        # Sayfalama ile tüm item'ları çek
+        # ── Detayları (value_type + hostid) itemids parçalarıyla çek ─────────
         by_type: dict[str, list] = {str(vt): [] for vt in VALUE_TYPES}
         host_of: dict[str, str] = {}
         seen_items: set = set()      # aynı itemid'yi iki kez ekleme
-        offset = 0
-        while offset < total:
+        for start in range(0, total, ITEM_CHUNK):
+            chunk_ids = all_item_ids[start: start + ITEM_CHUNK]
             batch = zpost({
                 "jsonrpc": "2.0", "method": "item.get",
                 "params": {
                     "output": ["itemid", "hostid", "value_type"],
+                    "itemids": chunk_ids,
                     "webitems": True,
-                    "monitored": True,       # sadece aktif host'lardaki aktif item'lar
-                    "limit": ITEM_CHUNK, "offset": offset,
                 },
                 "auth": token, "id": 1,
             }).get("result", [])
-            if not batch:
-                break
             for it in batch:
                 iid = it["itemid"]
                 if iid in seen_items:        # duplicate item koruması
@@ -189,8 +190,7 @@ with DAG(
                 if vt in by_type:
                     by_type[vt].append(iid)
                     host_of[iid] = it["hostid"]
-            offset += len(batch)
-            print(f"[item.get] offset={offset}/{total}, benzersiz item={len(seen_items)}")
+            print(f"[item.get] {start + len(chunk_ids)}/{total}, benzersiz item={len(seen_items)}")
 
         for vt, ids in by_type.items():
             print(f"   value_type {vt}: {len(ids)} item")

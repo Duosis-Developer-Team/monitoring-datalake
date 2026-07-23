@@ -23,9 +23,21 @@ Beklenen dosya formatı:
   }
 
 Airflow Variables:
-  staging_folder_path  → pending/ klasörünün üst dizini
-  pg_writer_conn_id    → PostgreSQL connection id (default: postgres_default)
-  pg_writer_batch_size → Batch boyutu (default: 200)
+  staging_folder_path       → pending/ klasörünün üst dizini
+  pg_writer_conn_id         → PostgreSQL connection id (default: postgres_default)
+  pg_writer_batch_size      → execute_values page_size (default: 1000)
+  pg_writer_time_budget_sec → Run başına zaman bütçesi (default: 240 = 4 dk)
+
+Performans notu:
+  insert/upsert yolu psycopg2'nin `execute_values` fonksiyonunu kullanır — tek
+  bir çok satırlı "INSERT ... VALUES (...),(...)" üretir. Eski `executemany`
+  SATIR BAŞINA bir round-trip yapıyordu; yüz binlerce kayıtta DAG 10 dakikayı
+  aşıp timeout alıyordu. execute_values round-trip sayısını
+  satır_sayısı/page_size'a düşürür.
+
+  Ayrıca process_pending bir zaman bütçesiyle çalışır: süre dolunca kalan
+  dosyalar silinmeden bırakılır ve bir sonraki run devralır. Böylece bir run
+  asla 5 dakikalık schedule aralığını aşıp birikme sarmalı başlatmaz.
 """
 
 from __future__ import annotations
@@ -34,6 +46,7 @@ import glob
 import io
 import json
 import os
+import time
 from datetime import datetime, timedelta
 
 # ─── Airflow v2 / v3 uyumlu import'lar ───────────────────────────────────────
@@ -49,6 +62,12 @@ try:
 except ImportError:
     PostgresHook = None
 
+# execute_values → çok satırlı tek INSERT. Yoksa executemany'ye düşülür.
+try:
+    from psycopg2.extras import execute_values
+except ImportError:
+    execute_values = None
+
 def _var(key: str, default: str = "") -> str:
     try:
         return Variable.get(key, default=default)
@@ -59,7 +78,11 @@ def _var(key: str, default: str = "") -> str:
 BASE_DIR    = _var("staging_folder_path", "/opt/airflow/dags/data_staging/zabbix")
 PENDING_DIR = os.path.join(BASE_DIR, "pending")
 PG_CONN_ID  = _var("pg_writer_conn_id", "postgres_default")
-BATCH_SIZE  = int(_var("pg_writer_batch_size", "200"))
+# execute_values page_size. 200 çok küçüktü; 1000 tipik olarak en iyi noktada.
+BATCH_SIZE  = int(_var("pg_writer_batch_size", "1000"))
+# Run başına zaman bütçesi (saniye). Schedule 5 dk olduğu için varsayılan 4 dk:
+# kalan süre dosya kapatma/commit için pay bırakır.
+TIME_BUDGET_SEC = int(_var("pg_writer_time_budget_sec", "240"))
 
 
 # ─── Yardımcı fonksiyonlar — DAG bloğu DIŞINDA tanımlanmalı ──────────────────
@@ -139,46 +162,78 @@ def _serialize_row(record: dict, all_cols: list, json_cols: list) -> tuple:
     return tuple(row)
 
 
+def _run_values(conn, sql_values: str, sql_single: str, rows: list) -> None:
+    """
+    Çok satırlı INSERT'i çalıştırır.
+
+    sql_values : "... VALUES %s ..."          → execute_values için
+    sql_single : "... VALUES (%s, %s, ...) ..." → executemany fallback'i için
+
+    execute_values tek istekte page_size kadar satır gönderir; executemany
+    satır başına bir round-trip yapar (çok yavaş, yalnızca fallback).
+    """
+    with conn.cursor() as cur:
+        if execute_values is not None:
+            execute_values(cur, sql_values, rows, page_size=BATCH_SIZE)
+        else:
+            print("   [WARN] psycopg2.extras.execute_values yok → executemany (yavaş).")
+            for i in range(0, len(rows), BATCH_SIZE):
+                cur.executemany(sql_single, rows[i: i + BATCH_SIZE])
+
+
 def _insert(conn, table: str, records: list, meta: dict) -> int:
     json_cols = meta.get("json_columns", [])
     all_cols  = list(records[0].keys()) + (["updated_at"] if "updated_at" not in records[0] else [])
-    sql = (
-        f"INSERT INTO {table} ({', '.join(all_cols)}) "
-        f"VALUES ({', '.join(['%s'] * len(all_cols))});"
+    rows      = [_serialize_row(r, all_cols, json_cols) for r in records]
+    col_list  = ", ".join(all_cols)
+
+    _run_values(
+        conn,
+        f"INSERT INTO {table} ({col_list}) VALUES %s;",
+        f"INSERT INTO {table} ({col_list}) VALUES ({', '.join(['%s'] * len(all_cols))});",
+        rows,
     )
-    written = 0
-    with conn.cursor() as cur:
-        for i in range(0, len(records), BATCH_SIZE):
-            batch = records[i: i + BATCH_SIZE]
-            cur.executemany(sql, [_serialize_row(r, all_cols, json_cols) for r in batch])
-            written += len(batch)
     conn.commit()
-    return written
+    return len(rows)
 
 
 def _upsert(conn, table: str, records: list, meta: dict) -> int:
     json_cols  = meta.get("json_columns", [])
     pk_cols    = meta.get("conflict_target", [])
+
+    # ── Dosya içi tekilleştirme (execute_values için ZORUNLU) ────────────────
+    # execute_values tek bir çok satırlı INSERT ürettiği için, aynı ifade içinde
+    # tekrarlanan bir conflict key'i PostgreSQL reddeder:
+    #   "ON CONFLICT DO UPDATE command cannot affect row a second time"
+    # Eski executemany'de her satır ayrı ifade olduğu için bu sorun görünmüyordu.
+    # Son kayıt kazanır (collector'lar zaten güncel durumu en sona yazar).
+    if pk_cols:
+        deduped: dict = {}
+        for r in records:
+            deduped[tuple(str(r.get(c)) for c in pk_cols)] = r
+        if len(deduped) != len(records):
+            print(f"   [DEDUP] {len(records)} → {len(deduped)} kayıt (conflict key tekrarı)")
+        records = list(deduped.values())
+
     all_cols   = list(records[0].keys()) + (["updated_at"] if "updated_at" not in records[0] else [])
     upd_cols   = [c for c in all_cols if c not in pk_cols]
     set_clause = ", ".join(
         f"{c} = EXCLUDED.{c}" if c != "updated_at" else "updated_at = NOW()"
         for c in upd_cols
     )
-    sql = (
-        f"INSERT INTO {table} ({', '.join(all_cols)}) "
-        f"VALUES ({', '.join(['%s'] * len(all_cols))}) "
-        f"ON CONFLICT ({', '.join(pk_cols)}) DO UPDATE SET {set_clause};"
+    rows     = [_serialize_row(r, all_cols, json_cols) for r in records]
+    col_list = ", ".join(all_cols)
+    tail     = f"ON CONFLICT ({', '.join(pk_cols)}) DO UPDATE SET {set_clause};"
+
+    _run_values(
+        conn,
+        f"INSERT INTO {table} ({col_list}) VALUES %s {tail}",
+        f"INSERT INTO {table} ({col_list}) "
+        f"VALUES ({', '.join(['%s'] * len(all_cols))}) {tail}",
+        rows,
     )
-    written = 0
-    with conn.cursor() as cur:
-        for i in range(0, len(records), BATCH_SIZE):
-            batch = records[i: i + BATCH_SIZE]
-            cur.executemany(sql, [_serialize_row(r, all_cols, json_cols) for r in batch])
-            written += len(batch)
-            print(f"   batch {i+1}–{i+len(batch)} / {len(records)}")
     conn.commit()
-    return written
+    return len(rows)
 
 
 def _build_tsv(records: list, columns: list, json_cols: list) -> io.StringIO:
@@ -292,14 +347,27 @@ with DAG(
 
         if not files:
             print("[INFO] pending/ dizininde dosya yok.")
-            return {"processed": 0, "errors": 0, "skipped": 0}
+            return {"processed": 0, "errors": 0, "skipped": 0, "deferred": 0}
 
         print(f"[INFO] {len(files)} dosya bulundu.")
-        processed, errors, skipped = 0, 0, 0
+        processed, errors, skipped, deferred = 0, 0, 0, 0
+
+        # ── Zaman bütçesi ────────────────────────────────────────────────────
+        # Schedule 5 dk. Bir run bunu aşarsa max_active_runs=1 nedeniyle sonraki
+        # run slot bekler, dosyalar birikir ve her run bir öncekinden daha çok iş
+        # devralır (birikme sarmalı → dagrun_timeout). Bütçe dolunca kalan
+        # dosyalara DOKUNMADAN çıkıyoruz; sıradaki run en eskiden devam eder.
+        deadline = time.monotonic() + TIME_BUDGET_SEC
 
         conn = _get_conn(PG_CONN_ID)
         try:
-            for file_path in files:
+            for idx, file_path in enumerate(files):
+                if time.monotonic() >= deadline:
+                    deferred = len(files) - idx
+                    print(f"\n[INFO] Zaman bütçesi doldu ({TIME_BUDGET_SEC}s). "
+                          f"Kalan {deferred} dosya sonraki run'a bırakıldı.")
+                    break
+
                 fname   = os.path.basename(file_path)
                 payload = {}
                 try:
@@ -335,14 +403,18 @@ with DAG(
 
                     _ensure_table(conn, table, records, meta)
 
+                    t0 = time.monotonic()
                     if method == "insert":
                         written = _insert(conn, table, records, meta)
                     elif method == "upsert":
                         written = _upsert(conn, table, records, meta)
                     elif method == "copy":
                         written = _copy(conn, table, records, meta)
+                    elapsed = time.monotonic() - t0
 
-                    print(f"   [OK] {written} kayıt → {table} ({method})")
+                    rate = written / elapsed if elapsed > 0 else 0
+                    print(f"   [OK] {written} kayıt → {table} ({method}) "
+                          f"— {elapsed:.1f}s, {rate:,.0f} satır/s")
                     os.remove(file_path)
                     print(f"   [OK] Silindi: {fname}")
                     processed += 1
@@ -364,7 +436,8 @@ with DAG(
         finally:
             conn.close()
 
-        summary = {"processed": processed, "errors": errors, "skipped": skipped}
+        summary = {"processed": processed, "errors": errors,
+                   "skipped": skipped, "deferred": deferred}
         print(f"\n[SUMMARY] {summary}")
         return summary
 

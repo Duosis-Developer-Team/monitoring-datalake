@@ -68,9 +68,11 @@ schema/index/grant reference, but the writer will create tables itself if absent
 - **`zabbix_data_collector_v2`** (`@hourly`) — host inventory. Three API calls
   (hosts+interfaces+groups+templates paginated, then macros, then tags) merged
   in memory to avoid one expensive join. Secret macros are masked. `upsert` on
-  `hostid`. Pagination uses `countOutput` + `while offset < total` (never
-  `while True`) plus `max_active_runs=1` to prevent runaway loops on overlapping
-  runs.
+  `hostid`. **Pagination: the Zabbix API `get` methods do NOT support `offset`
+  (it is silently ignored), so `limit`+`offset` returns the same first page every
+  time. The collectors instead fetch the full id list in one light call
+  (`output:[id]`) then pull details in `hostids`/`itemids` chunks of
+  `zabbix_chunk_size`.** `max_active_runs=1` still guards overlapping runs.
 - **`zabbix_history_collector`** (`*/5`) — time-series. `history.get` returns one
   value_type per call, so it builds an item→value_type map first, then issues one
   call per type; all values land in one long-format `zabbix_history` table tagged

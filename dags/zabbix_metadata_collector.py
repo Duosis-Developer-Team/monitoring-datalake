@@ -177,28 +177,30 @@ with DAG(
         url, token = auth["url"], auth["token"]
         zpost = _make_zpost(url, token)
 
-        _cnt = zpost({
+        # ÖNEMLİ: Zabbix API get metotları `offset` DESTEKLEMEZ → tüm ID'leri
+        # tek çağrıda al, detayları `templateids` parçalarıyla çek.
+        id_rows = zpost({
             "jsonrpc": "2.0", "method": "template.get",
-            "params": {"output": ["templateid"], "countOutput": True},
+            "params": {"output": ["templateid"]},
             "auth": token, "id": 0,
-        }).get("result", "0")
-        total = len(_cnt) if isinstance(_cnt, list) else int(_cnt)
+        }).get("result", [])
+        all_ids = [t["templateid"] for t in id_rows]
+        total = len(all_ids)
         print(f"[template.get] Toplam template: {total}")
 
-        records, offset = [], 0
-        while offset < total:
+        records = []
+        for start in range(0, total, CHUNK_SIZE):
+            chunk_ids = all_ids[start: start + CHUNK_SIZE]
             batch = zpost({
                 "jsonrpc": "2.0", "method": "template.get",
                 "params": {
                     "output": ["templateid", "name", "host", "description"],
                     "selectTemplateGroups": ["name"],
                     "selectParentTemplates": ["templateid", "name"],
-                    "limit": CHUNK_SIZE, "offset": offset,
+                    "templateids": chunk_ids,
                 },
                 "auth": token, "id": 1,
             }).get("result", [])
-            if not batch:
-                break
             for t in batch:
                 records.append({
                     "templateid":       t.get("templateid"),
@@ -208,8 +210,7 @@ with DAG(
                     "template_groups":  [g.get("name") for g in t.get("templategroups", t.get("templateGroups", []))],
                     "parent_templates": [p.get("name") for p in t.get("parentTemplates", [])],
                 })
-            offset += len(batch)
-            print(f"[template.get] offset={offset}/{total}")
+            print(f"[template.get] {start + len(chunk_ids)}/{total}")
 
         _write_pending(records, TEMPLATES_META, kwargs["run_id"], "templates")
 
@@ -221,28 +222,30 @@ with DAG(
 
         # webitems=True → web senaryosu item'larını da dahil eder.
         # monitored/templated filtresi YOK → tüm item'lar (host + şablon kaynaklı).
-        _cnt = zpost({
+        # ÖNEMLİ: Zabbix API get metotları `offset` DESTEKLEMEZ → tüm ID'leri
+        # tek çağrıda al, detayları `itemids` parçalarıyla çek.
+        id_rows = zpost({
             "jsonrpc": "2.0", "method": "item.get",
-            "params": {"output": ["itemid"], "webitems": True, "countOutput": True},
+            "params": {"output": ["itemid"], "webitems": True},
             "auth": token, "id": 0,
-        }).get("result", "0")
-        total = len(_cnt) if isinstance(_cnt, list) else int(_cnt)
+        }).get("result", [])
+        all_ids = [r["itemid"] for r in id_rows]
+        total = len(all_ids)
         print(f"[item.get] Toplam item: {total}")
 
-        records, offset, seen = [], 0, set()
-        while offset < total:
+        records, seen = [], set()
+        for start in range(0, total, CHUNK_SIZE):
+            chunk_ids = all_ids[start: start + CHUNK_SIZE]
             batch = zpost({
                 "jsonrpc": "2.0", "method": "item.get",
                 "params": {
                     "output": ["itemid", "hostid", "name", "key_",
                                "value_type", "units", "status", "templateid"],
                     "webitems": True,
-                    "limit": CHUNK_SIZE, "offset": offset,
+                    "itemids": chunk_ids,
                 },
                 "auth": token, "id": 1,
             }).get("result", [])
-            if not batch:
-                break
             for it in batch:
                 iid = it.get("itemid")
                 if iid in seen:                 # aynı itemid'yi iki kez ekleme
@@ -260,8 +263,7 @@ with DAG(
                     "status":          "Enabled" if str(it.get("status")) == "0" else "Disabled",
                     "templateid":      it.get("templateid"),     # şablon kaynaklı item'ın parent id'si
                 })
-            offset += len(batch)
-            print(f"[item.get] offset={offset}/{total}, benzersiz={len(seen)}")
+            print(f"[item.get] {start + len(chunk_ids)}/{total}, benzersiz={len(seen)}")
 
         _write_pending(records, ITEMS_META, kwargs["run_id"], "items")
 
